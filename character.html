@@ -84,6 +84,8 @@
         padding-left: 20px;
         padding-bottom: 10px;
     }
+    /* Style for hidden fields */
+    .hidden { display: none !important; }
 
   </style>
 </head>
@@ -422,24 +424,13 @@ function renderCombat(root){
   root.appendChild(hpCard);
 
   const atk = document.createElement('div'); atk.className='card'; atk.innerHTML = '<h3>Attacks</h3>';
-  const addRow = document.createElement('div'); addRow.className='row';
-  const wName = document.createElement('input'); wName.placeholder='Name (Longsword)';
-  const wAbil = document.createElement('select'); ['str','dex','int','wis','cha'].forEach(a=>{ const o=document.createElement('option'); o.value=a; o.textContent=a.toUpperCase(); wAbil.appendChild(o); }); wAbil.value='str';
-  const wBonus = document.createElement('input'); wBonus.type='number'; wBonus.placeholder='Magic bonus'; wBonus.value=0;
-  const wDmg = document.createElement('input'); wDmg.placeholder='Damage Dice (eg 1d8)';
-  const wType = document.createElement('input'); wType.placeholder='Type (slashing)';
-  const addBtn = document.createElement('button'); addBtn.className='btn primary'; addBtn.textContent='Add';
-  addBtn.onclick=()=>{
-    if(!wName.value || !wDmg.value){ toast('Name and damage are required'); return; }
-    state.attacks.push({id:id(), name:wName.value, ability:wAbil.value, bonus:Number(wBonus.value||0), dice:wDmg.value, type:wType.value||''});
-    save(); render();
-  };
-  addRow.append(wName,wAbil,wBonus,wDmg,wType,addBtn); atk.appendChild(addRow);
-
+  
+  // FIX: Removed native custom weapon input fields from the Combat menu.
+  
   const table=document.createElement('table'); table.innerHTML='<thead><tr><th>Name</th><th>Attack</th><th>Damage</th><th></th></tr></thead><tbody></tbody>';
   const tb = table.querySelector('tbody');
   
-  // Combine native attacks and equipped inventory weapons
+  // Custom Attacks List will now only pull from Inventory (weapons)
   const inventoryWeapons = state.inventory.items.filter(i => i.equipped && (i.type === 'Weapon' || i.type === 'Magic Weapon'))
     .map(i => ({
       id: i.id,
@@ -449,10 +440,11 @@ function renderCombat(root){
       bonus: Number(i.wepBonus) || 0,
       dice: i.wepDamageDice,
       type: i.wepDamageType,
-      notes: i.wepNotes // Now pulls notes
+      notes: i.wepNotes 
     }));
 
   const attacksList = [
+      // state.attacks will be empty unless manually added by other features/imports.
       ...state.attacks,
       ...inventoryWeapons
   ];
@@ -494,8 +486,9 @@ function renderCombat(root){
         save(); render(); 
       };
     } else {
-      // For inventory weapons, delete button is irrelevant here, so remove it
-      tr.querySelector('[data-del]').remove();
+      // For inventory weapons, delete button is removed since they are managed in Inventory
+      const deleteBtn = tr.querySelector('[data-del]');
+      if(deleteBtn) deleteBtn.remove();
     }
     
     tb.appendChild(tr);
@@ -575,14 +568,24 @@ function renderInventory(root){
   const items=document.createElement('div'); items.className='card'; items.innerHTML='<h3>Pack</h3>';
   
   // --- Start: Item Creation Fields ---
-  const itemTypes = ['Weapon','Armor','Shield','Consumable/Ammo','Focus/Tools','Gear','Magic Weapon','Magic Armor','Wondrous Item'];
+  const itemTypes = ['Select Item Type','Weapon','Armor','Shield','Consumable/Ammo','Focus/Tools','Gear','Magic Weapon','Magic Armor','Wondrous Item'];
   
-  // Create inputs using the helper functions, which return a wrapper div
+  // 1. General Fields (Always Visible)
   const nameWrap = input('Name', '', v=>{});
-  const typeSelectWrap = select('Item Type', itemTypes[0], itemTypes, v=>{});
+  const typeSelectWrap = select('Item Type', itemTypes[0], itemTypes, (v) => { toggleItemFields(v); });
   const weightWrap = num('Weight', '', v=>{});
 
-  // Weapon-specific inputs (visible by default for testing, will be controlled later)
+  // Get the actual HTML input elements for value retrieval
+  const nameInput = nameWrap.querySelector('input[type="text"]');
+  const wtInput = weightWrap.querySelector('input[type="number"]');
+
+  nameInput.placeholder = 'Item name';
+  wtInput.placeholder = 'Weight (lbs)';
+  
+  // 2. Weapon-Specific Fields Container
+  const wepFieldsContainer = document.createElement('div');
+  wepFieldsContainer.id = 'wepFields';
+  wepFieldsContainer.className = 'grid cols-4 hidden'; // Hidden by default
   const dmgDiceWrap = input('Damage Dice (e.g., 1d8)', '', v=>{});
   const dmgTypeWrap = input('Damage Type (e.g., Slashing)', '', v=>{});
   const abilSelectWrap = select('Ability Modifier', 'str', ['str', 'dex', 'con', 'int', 'wis', 'cha'], v=>{});
@@ -590,27 +593,58 @@ function renderInventory(root){
   profCheckWrap.innerHTML = `<label>Proficient?</label><input type="checkbox">`;
   const bonusNumWrap = num('Magic Bonus (+X)', '0', v=>{});
   
-  // Get the actual HTML input/select/checkbox elements from the wrapper divs for value retrieval
-  const nameInput = nameWrap.querySelector('input[type="text"]');
-  const wtInput = weightWrap.querySelector('input[type="number"]');
+  wepFieldsContainer.appendChild(dmgDiceWrap);
+  wepFieldsContainer.appendChild(dmgTypeWrap);
+  wepFieldsContainer.appendChild(abilSelectWrap);
+  wepFieldsContainer.appendChild(profCheckWrap);
+  
+  // Get weapon elements for value retrieval
   const dmgDiceInput = dmgDiceWrap.querySelector('input[type="text"]');
   const dmgTypeInput = dmgTypeWrap.querySelector('input[type="text"]');
   const abilSelect = abilSelectWrap.querySelector('select');
   const profCheck = profCheckWrap.querySelector('input[type="checkbox"]');
   const bonusInput = bonusNumWrap.querySelector('input[type="number"]');
 
-  nameInput.placeholder = 'Item name';
-  wtInput.placeholder = 'Weight (lbs)';
+
+  // 3. Armor-Specific Fields Container (PLACEHOLDER: Add when implemented)
+  const armorFieldsContainer = document.createElement('div');
+  armorFieldsContainer.id = 'armorFields';
+  armorFieldsContainer.className = 'grid cols-4 hidden';
+  // Example fields (will be added in later step)
+  armorFieldsContainer.innerHTML = '<div><label>AC/Base</label><input type="number"></div><div><label>Max Dex Mod</label><input type="text"></div><div><label>Stealth Disadvantage</label><input type="checkbox"></div>';
   
-  // Notes input
+  
+  // 4. Notes section (Always Visible, but cleared/reset when switching types)
   const notesWrap = document.createElement('div');
-  notesWrap.innerHTML = `<label>Weapon Notes / Features</label><textarea id="itemNotes"></textarea>`;
+  notesWrap.innerHTML = `<label id="notesLabel">Item Notes / Features</label><textarea id="itemNotes"></textarea>`;
   const notesTextarea = notesWrap.querySelector('textarea');
-  
+  notesTextarea.onchange = () => { /* No direct save on change yet */ };
+
+
+  // Function to show/hide fields based on type selection
+  function toggleItemFields(selectedType) {
+    // Hide all type-specific fields
+    wepFieldsContainer.classList.add('hidden');
+    armorFieldsContainer.classList.add('hidden'); // Placeholder
+    
+    // Show fields based on selection
+    if (selectedType === 'Weapon' || selectedType === 'Magic Weapon') {
+      wepFieldsContainer.classList.remove('hidden');
+    } else if (selectedType === 'Armor' || selectedType === 'Magic Armor') {
+      // Placeholder logic for Armor
+      // armorFieldsContainer.classList.remove('hidden');
+    }
+  }
+
+
   const addBtn=document.createElement('button'); addBtn.className='btn primary'; addBtn.textContent='Add Item';
   addBtn.onclick=()=>{ 
-    if(!nameInput.value){ toast('Item name required'); return; } 
     const itemType = typeSelectWrap.querySelector('select').value;
+
+    if(!nameInput.value || itemType === 'Select Item Type'){ 
+        toast('Name and Item Type required'); 
+        return; 
+    } 
 
     const newItem = {
       id:id(), 
@@ -620,15 +654,17 @@ function renderInventory(root){
       equipped: false 
     };
     
-    // Add weapon properties if it's a weapon type
+    // Save Weapon properties
     if(itemType === 'Weapon' || itemType === 'Magic Weapon') {
       newItem.wepDamageDice = dmgDiceInput.value;
       newItem.wepDamageType = dmgTypeInput.value;
       newItem.wepAbility = abilSelect.value;
       newItem.wepProficient = profCheck.checked;
       newItem.wepBonus = Number(bonusInput.value||0);
-      // SAVE NOTES
       newItem.wepNotes = notesTextarea.value; 
+    } else {
+        // Save generic notes for all other types
+        newItem.wepNotes = notesTextarea.value;
     }
 
     state.inventory.items.push(newItem); 
@@ -636,22 +672,27 @@ function renderInventory(root){
     render(); 
   };
   
-  // Item fields grid (4 columns)
+  // --- Assembling the Item Builder UI ---
   const itemAddGrid1 = document.createElement('div'); itemAddGrid1.className='grid cols-4';
   itemAddGrid1.style.alignItems='flex-end';
+  
+  // Grid 1: Name, Type, Weight, Add Button
+  const weightInputDiv = weightWrap.querySelector('input');
+  weightInputDiv.style.width = 'calc(100% - 10px)'; // Adjust width to match input function helper padding
+  
   itemAddGrid1.append(nameWrap, typeSelectWrap, weightWrap, addBtn);
   items.appendChild(itemAddGrid1);
   
-  // Weapon fields grid (4 columns)
-  const wepAddGrid = document.createElement('div'); wepAddGrid.className='grid cols-4';
-  wepAddGrid.style.marginTop = '12px';
-  wepAddGrid.append(dmgDiceWrap, dmgTypeWrap, abilSelectWrap, profCheckWrap);
-  items.appendChild(wepAddGrid);
-
+  // Add containers for dynamic fields
+  items.appendChild(wepFieldsContainer);
+  items.appendChild(armorFieldsContainer); // Placeholder
+  
   // Notes section
   notesWrap.style.marginTop = '12px';
   items.appendChild(notesWrap);
-  // --- End: Item Creation Fields ---
+  
+  // Initialize dynamic fields (hidden)
+  toggleItemFields(itemTypes[0]);
 
 
   // Table of current items
