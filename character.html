@@ -65,6 +65,16 @@ See the file LICENSE for details.
     
     .bubble{display:grid;place-items:center;border:1px solid var(--border);border-radius:10px;background:var(--bg);height:46px;font-size:18px}
     .toast{position:fixed;right:16px;bottom:16px;background:var(--accent);color:var(--bg);padding:10px 14px;border-radius:10px;z-index:9999}
+    /* Custom style for attack notes */
+    .attack-notes td {
+      padding-top: 0;
+      font-style: italic;
+      color: var(--muted);
+      border-bottom: 1px solid var(--border) !important;
+    }
+    .attack-notes:last-child td {
+      border-bottom: none !important;
+    }
   </style>
 </head>
 <body>
@@ -116,7 +126,7 @@ function defState(){
     combat:{ ac:10, hpMax:12, hp:12, temp:0, hitDie:'d10', hitDice:1, initiative:2, speed:30, death:{success:0, fail:0} },
     attacks:[],
     inventory:{ coins:{cp:0,sp:0,gp:15,pp:0}, 
-      items:[], // Item structure now: {id, name, weight, type, equipped}
+      items:[], // Item structure: {id, name, weight, type, equipped, ...typeSpecificData}
       armor:'None', shield:false, carry:[] 
     },
     features:[],
@@ -418,11 +428,45 @@ function renderCombat(root){
 
   const table=document.createElement('table'); table.innerHTML='<thead><tr><th>Name</th><th>Attack</th><th>Damage</th><th></th></tr></thead><tbody></tbody>';
   const tb = table.querySelector('tbody');
-  state.attacks.forEach(w=>{
-    const att = mod(totalAbility(w.ability)) + profBonus() + (w.bonus||0);
-    const dmgMod = mod(totalAbility(w.ability)) + (w.bonus||0);
+  
+  // Combine native attacks and equipped inventory weapons
+  const attacksList = [
+      ...state.attacks,
+      ...state.inventory.items.filter(i => i.equipped && (i.type === 'Weapon' || i.type === 'Magic Weapon'))
+        .map(i => ({
+          id: i.id,
+          name: i.name,
+          ability: i.wepAbility || 'str', // Use weapon ability, default to str
+          proficient: i.wepProficient,
+          bonus: Number(i.wepBonus) || 0,
+          dice: i.wepDamageDice,
+          type: i.wepDamageType,
+          notes: i.wepNotes
+        }))
+  ];
+
+  attacksList.forEach(w=>{
+    // Calculate attack and damage modifiers
+    const abilityScore = w.ability ? totalAbility(w.ability) : totalAbility('str'); // Fallback to STR if ability is undefined
+    const profBonusVal = w.proficient ? profBonus() : 0;
+    
+    const att = mod(abilityScore) + profBonusVal + (w.bonus||0);
+    const dmgMod = mod(abilityScore) + (w.bonus||0);
+    const damageText = `${w.dice}${dmgMod? (dmgMod>0?`+${dmgMod}`:dmgMod):''} ${w.type}`;
+    
+    // Attack Row (Stats)
     const tr=document.createElement('tr');
-    tr.innerHTML = `<td>${w.name}</td><td>${displayMod(att)}</td><td>${w.dice}${dmgMod? (dmgMod>0?`+${dmgMod}`:dmgMod):''} ${w.type}</td><td><button class="btn small" data-id="${w.id}">Roll</button> <button class="btn small danger" data-del="${w.id}">Delete</button></td>`;
+    tr.innerHTML = `
+      <td>${w.name}</td>
+      <td>${displayMod(att)}</td>
+      <td>${damageText}</td>
+      <td>
+        <button class="btn small" data-id="${w.id}">Roll</button> 
+        <button class="btn small danger" data-del="${w.id}">Delete</button>
+      </td>
+    `;
+    
+    // Roll handler
     tr.querySelector('[data-id]').onclick=()=>{
       const r1 = rollDice('1d20');
       const toHit = r1.total + att;
@@ -430,8 +474,27 @@ function renderCombat(root){
       const dmg = r2.total + dmgMod;
       log(`${state.info.name} attacks with ${w.name}: to hit ${r1.total}${displayMod(att)} = ${toHit}; damage ${w.dice}${dmgMod? displayMod(dmgMod):''} → ${dmg}`);
     };
-    tr.querySelector('[data-del]').onclick=()=>{ state.attacks = state.attacks.filter(a=>a.id!==w.id); save(); render(); };
+    
+    // Delete handler (only for items in the native attacks list)
+    if(state.attacks.find(a=>a.id===w.id)){
+      tr.querySelector('[data-del]').onclick=()=>{ 
+        state.attacks = state.attacks.filter(a=>a.id!==w.id); 
+        save(); render(); 
+      };
+    } else {
+      // Inventory items are deleted from inventory, so remove the button for now
+      tr.querySelector('[data-del]').remove();
+    }
+    
     tb.appendChild(tr);
+
+    // Notes Row (if notes exist)
+    if(w.notes){
+        const notesTr = document.createElement('tr');
+        notesTr.className = 'attack-notes';
+        notesTr.innerHTML = `<td colspan="4">${w.notes}</td>`;
+        tb.appendChild(notesTr);
+    }
   });
   atk.appendChild(table); root.appendChild(atk);
 
@@ -497,45 +560,81 @@ function renderInventory(root){
   card.appendChild(coins);
 
   const items=document.createElement('div'); items.className='card'; items.innerHTML='<h3>Pack</h3>';
-  const add=document.createElement('div'); add.className='row';
   
-  // New item entry fields
+  // --- Start: Item Creation Fields ---
   const itemTypes = ['Weapon','Armor','Shield','Consumable/Ammo','Focus/Tools','Gear','Magic Weapon','Magic Armor','Wondrous Item'];
   
-  // Create all inputs using the helper functions, which return a wrapper div
+  // Create inputs using the helper functions, which return a wrapper div
   const nameWrap = input('Name', '', v=>{});
   const typeSelectWrap = select('Item Type', itemTypes[0], itemTypes, v=>{});
   const weightWrap = num('Weight', '', v=>{});
 
-  // Get the actual HTML input elements from the wrapper divs for value retrieval
+  // Weapon-specific inputs (visible by default for testing, will be controlled later)
+  const dmgDiceWrap = input('Damage Dice (e.g., 1d8)', '', v=>{});
+  const dmgTypeWrap = input('Damage Type (e.g., Slashing)', '', v=>{});
+  const abilSelectWrap = select('Ability Modifier', 'str', ['str', 'dex', 'con', 'int', 'wis', 'cha'], v=>{});
+  const profCheckWrap = document.createElement('div');
+  profCheckWrap.innerHTML = `<label>Proficient?</label><input type="checkbox">`;
+  const bonusNumWrap = num('Magic Bonus (+X)', '0', v=>{});
+  
+  // Get the actual HTML input/select/checkbox elements from the wrapper divs for value retrieval
   const nameInput = nameWrap.querySelector('input[type="text"]');
   const wtInput = weightWrap.querySelector('input[type="number"]');
+  const dmgDiceInput = dmgDiceWrap.querySelector('input[type="text"]');
+  const dmgTypeInput = dmgTypeWrap.querySelector('input[type="text"]');
+  const abilSelect = abilSelectWrap.querySelector('select');
+  const profCheck = profCheckWrap.querySelector('input[type="checkbox"]');
+  const bonusInput = bonusNumWrap.querySelector('input[type="number"]');
 
   nameInput.placeholder = 'Item name';
   wtInput.placeholder = 'Weight (lbs)';
   
   const addBtn=document.createElement('button'); addBtn.className='btn primary'; addBtn.textContent='Add Item';
   addBtn.onclick=()=>{ 
-    // FIX: Use the value from the explicit input element (nameInput)
     if(!nameInput.value){ toast('Item name required'); return; } 
-    state.inventory.items.push({
+    const itemType = typeSelectWrap.querySelector('select').value;
+
+    const newItem = {
       id:id(), 
       name:nameInput.value, 
-      type:typeSelectWrap.querySelector('select').value, 
+      type:itemType, 
       weight:Number(wtInput.value||0),
       equipped: false 
-    }); 
+    };
+    
+    // Add weapon properties if it's a weapon type
+    if(itemType === 'Weapon' || itemType === 'Magic Weapon') {
+      newItem.wepDamageDice = dmgDiceInput.value;
+      newItem.wepDamageType = dmgTypeInput.value;
+      newItem.wepAbility = abilSelect.value;
+      newItem.wepProficient = profCheck.checked;
+      newItem.wepBonus = Number(bonusInput.value||0);
+    }
+
+    state.inventory.items.push(newItem); 
     save(); 
     render(); 
   };
   
-  // Arrange new fields for adding items
-  const itemAddGrid = document.createElement('div'); itemAddGrid.className='grid cols-4';
-  itemAddGrid.style.alignItems='flex-end';
+  // Item fields grid (4 columns)
+  const itemAddGrid1 = document.createElement('div'); itemAddGrid1.className='grid cols-4';
+  itemAddGrid1.style.alignItems='flex-end';
+  itemAddGrid1.append(nameWrap, typeSelectWrap, weightWrap, addBtn);
+  items.appendChild(itemAddGrid1);
   
-  // Append the wrapper divs and the button
-  itemAddGrid.append(nameWrap, typeSelectWrap, weightWrap, addBtn);
-  items.appendChild(itemAddGrid);
+  // Weapon fields grid (4 columns)
+  const wepAddGrid = document.createElement('div'); wepAddGrid.className='grid cols-4';
+  wepAddGrid.style.marginTop = '12px';
+  wepAddGrid.append(dmgDiceWrap, dmgTypeWrap, abilSelectWrap, profCheckWrap);
+  items.appendChild(wepAddGrid);
+
+  // Notes section
+  const notesWrap = document.createElement('div');
+  notesWrap.innerHTML = `<label>Weapon Notes / Features</label><textarea id="itemNotes"></textarea>`;
+  const notesTextarea = notesWrap.querySelector('textarea');
+  items.appendChild(notesWrap);
+
+  // --- End: Item Creation Fields ---
 
 
   // Table of current items
@@ -548,7 +647,7 @@ function renderInventory(root){
     const toggleEquip = (e) => {
       i.equipped = e.target.checked;
       save(); 
-      // render(); // We'll re-render once stats are implemented
+      render(); // Re-render to update Combat tab if a weapon is equipped/unequipped
     };
 
     tr.innerHTML=`
@@ -556,9 +655,11 @@ function renderInventory(root){
       <td>${i.type||'Gear'}</td>
       <td>${i.weight||0}</td>
       <td style="text-align:center;"><input type="checkbox" ${i.equipped?'checked':''}></td>
-      <td><button class="btn small danger">Delete</button></td>
+      <td><button class="btn small danger" data-id="${i.id}">Delete</button></td>
     `; 
     tr.querySelector('input[type="checkbox"]').onchange=toggleEquip;
+    
+    // Delete handler for inventory items
     tr.querySelector('button').onclick=()=>{ 
       state.inventory.items=state.inventory.items.filter(x=>x.id!==i.id); 
       save(); 
