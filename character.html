@@ -55,7 +55,11 @@ See the file LICENSE for details.
     th,td{padding:10px;border-bottom:1px solid var(--border);text-align:left}
     th{background:var(--chip);color:var(--chip-text)}
     .note{color:var(--muted);font-size:12px}
+    /* FIX: Modified .ability CSS to structure the label/bubble/input correctly */
     .ability{display:grid;grid-template-columns:80px 1fr;gap:8px;align-items:center}
+    .ability > label{ grid-column: 1 / 2; text-align: right; } /* Align label to right side of column 1 */
+    .ability > div:not(.bubble){ grid-column: 2 / 3; } /* Target the controlGroup container */
+    
     .bubble{display:grid;place-items:center;border:1px solid var(--border);border-radius:10px;background:var(--bg);height:46px;font-size:18px}
     .toast{position:fixed;right:16px;bottom:16px;background:var(--accent);color:var(--bg);padding:10px 14px;border-radius:10px;z-index:9999}
   </style>
@@ -286,25 +290,45 @@ function renderBuilder(root){
 
   const ab = document.createElement('div'); ab.className='card'; ab.innerHTML = `<h3>Abilities</h3>`; root.appendChild(ab);
   const abg = document.createElement('div'); abg.className='grid cols-6'; ab.appendChild(abg);
+  
+  // FIX: Modified loop to structure label/bubble/input correctly for vertical alignment in the second grid column
   ['str','dex','con','int','wis','cha'].forEach(k=>{
     const wrap=document.createElement('div'); wrap.className='ability';
-    wrap.innerHTML = `<label style="text-transform:uppercase">${k}</label>`;
+    
+    // Label for column 1
+    const label=document.createElement('label'); 
+    label.style.textTransform='uppercase'; 
+    label.textContent=k; 
+    wrap.appendChild(label);
+
+    // Container for bubble and input for column 2 (to stack them vertically)
+    const controlGroup = document.createElement('div');
+    controlGroup.style.display = 'grid'; // Stacks them
+    controlGroup.style.gap = '4px'; // Tighter gap for stacking
+    
     const box = document.createElement('div'); box.className='bubble';
     box.innerHTML = `<div>
       <div style="font-size:18px;text-align:center">${totalAbility(k)}</div>
       <div class="note" style="text-align:center">${displayMod(mod(totalAbility(k)))}</div>
     </div>`;
-    wrap.appendChild(box);
+    controlGroup.appendChild(box);
+    
     const control = document.createElement('input'); control.type='number'; control.value=state.abilities[k]; control.onchange=()=>{ setAbility(k, control.value) };
-    wrap.appendChild(control);
+    controlGroup.appendChild(control);
+
+    wrap.appendChild(controlGroup);
     abg.appendChild(wrap);
   });
+  // END FIX
 
   const saveCard=document.createElement('div'); saveCard.className='card'; saveCard.innerHTML='<h3>Saving Throws & Skills</h3>';
   root.appendChild(saveCard);
-  const sg=document.createElement('div'); sg.className='grid cols-2'; saveCard.appendChild(sg);
+  const sg=document.createElement('div'); sg.className='grid cols-2'; saveCard.appendChild(sg); // This is the grid container
+
   // Saves
-  const sv=document.createElement('div'); sv.innerHTML='<b>Saves</b>'; saveCard.appendChild(sv);
+  const sv=document.createElement('div'); sv.innerHTML='<b>Saves</b>'; 
+  sg.appendChild(sv); // Append header to grid
+
   const st=document.createElement('table'); st.innerHTML='<thead><tr><th>Ability</th><th>Prof</th><th>Bonus</th></tr></thead><tbody></tbody>';
   const stb=st.querySelector('tbody');
   ['str','dex','con','int','wis','cha'].forEach(k=>{
@@ -312,7 +336,12 @@ function renderBuilder(root){
     tr.innerHTML=`<td style="text-transform:uppercase">${k}</td><td><input type="checkbox" ${state.saves[k]?'checked':''}></td><td>${displayMod(saveThrow(k))}</td>`;
     tr.querySelector('input').onchange=(e)=>{ state.saves[k]=e.target.checked; save(); render(); };
     stb.appendChild(tr);
-  }); saveCard.appendChild(st);
+  }); 
+  sg.appendChild(st); // FIX: Append save table to grid container 'sg'
+
+  // Add a placeholder div for header alignment on the right
+  const skHeader=document.createElement('div'); skHeader.innerHTML='<b>Skills</b>'; 
+  sg.appendChild(skHeader);
 
   // Skills
   const sk=document.createElement('table'); sk.innerHTML='<thead><tr><th>Skill</th><th>Prof</th><th>Bonus</th></tr></thead><tbody></tbody>';
@@ -324,7 +353,7 @@ function renderBuilder(root){
     tr.querySelector('input').onchange=(e)=>{ state.skills[k]=e.target.checked; save(); render(); };
     skb.appendChild(tr);
   });
-  saveCard.appendChild(sk);
+  sg.appendChild(sk); // FIX: Append skill table to grid container 'sg'
 }
 
 function renderSheet(root){
