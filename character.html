@@ -86,6 +86,16 @@
     }
     /* Style for hidden fields */
     .hidden { display: none !important; }
+    /* Style for the penalty note */
+    #armorPenaltyNote {
+        color: var(--danger);
+        font-size: 12px;
+        margin-top: 8px;
+        padding: 8px;
+        border: 1px solid var(--danger);
+        border-radius: 8px;
+        background: rgba(255, 122, 122, 0.1);
+    }
 
   </style>
 </head>
@@ -589,50 +599,78 @@ function renderInventory(root){
   const dmgDiceWrap = input('Damage Dice (e.g., 1d8)', '', v=>{});
   const dmgTypeWrap = input('Damage Type (e.g., Slashing)', '', v=>{});
   const abilSelectWrap = select('Ability Modifier', 'str', ['str', 'dex', 'con', 'int', 'wis', 'cha'], v=>{});
-  const profCheckWrap = document.createElement('div');
-  profCheckWrap.innerHTML = `<label>Proficient?</label><input type="checkbox">`;
+  const profCheckWepWrap = document.createElement('div');
+  profCheckWepWrap.innerHTML = `<label>Proficient?</label><input type="checkbox">`;
   const bonusNumWrap = num('Magic Bonus (+X)', '0', v=>{});
   
-  wepFieldsContainer.appendChild(dmgDiceWrap);
-  wepFieldsContainer.appendChild(dmgTypeWrap);
-  wepFieldsContainer.appendChild(abilSelectWrap);
-  wepFieldsContainer.appendChild(profCheckWrap);
+  wepFieldsContainer.append(dmgDiceWrap, dmgTypeWrap, abilSelectWrap, profCheckWepWrap);
   
   // Get weapon elements for value retrieval
   const dmgDiceInput = dmgDiceWrap.querySelector('input[type="text"]');
   const dmgTypeInput = dmgTypeWrap.querySelector('input[type="text"]');
   const abilSelect = abilSelectWrap.querySelector('select');
-  const profCheck = profCheckWrap.querySelector('input[type="checkbox"]');
+  const profCheckWep = profCheckWepWrap.querySelector('input[type="checkbox"]');
   const bonusInput = bonusNumWrap.querySelector('input[type="number"]');
 
 
-  // 3. Armor-Specific Fields Container (PLACEHOLDER: Add when implemented)
+  // 3. Armor-Specific Fields Container
   const armorFieldsContainer = document.createElement('div');
   armorFieldsContainer.id = 'armorFields';
   armorFieldsContainer.className = 'grid cols-4 hidden';
-  // Example fields (will be added in later step)
-  armorFieldsContainer.innerHTML = '<div><label>AC/Base</label><input type="number"></div><div><label>Max Dex Mod</label><input type="text"></div><div><label>Stealth Disadvantage</label><input type="checkbox"></div>';
   
-  
-  // 4. Notes section (Always Visible, but cleared/reset when switching types)
+  const acBaseWrap = num('Base AC', '10', v=>{});
+  const maxDexWrap = input('Max Dex Mod (e.g., 2, None)', 'None', v=>{});
+  const strReqWrap = num('STR Req (e.g., 13)', '0', v=>{});
+  const profCheckArmorWrap = document.createElement('div');
+  profCheckArmorWrap.innerHTML = `<label>Proficient?</label><input type="checkbox" id="armorProfCheck">`;
+  const stealthDisWrap = document.createElement('div');
+  stealthDisWrap.innerHTML = `<label>Stealth Disadvantage?</label><input type="checkbox">`;
+
+  armorFieldsContainer.append(acBaseWrap, maxDexWrap, strReqWrap, profCheckArmorWrap, stealthDisWrap);
+
+  // Get armor elements for value retrieval
+  const acBaseInput = acBaseWrap.querySelector('input[type="number"]');
+  const maxDexInput = maxDexWrap.querySelector('input[type="text"]');
+  const strReqInput = strReqWrap.querySelector('input[type="number"]');
+  const profCheckArmor = profCheckArmorWrap.querySelector('input[type="checkbox"]');
+  const stealthDisCheck = stealthDisWrap.querySelector('input[type="checkbox"]');
+
+  // Armor Penalty Note (Dynamically shown)
+  const armorPenaltyNote = document.createElement('div');
+  armorPenaltyNote.id = 'armorPenaltyNote';
+  armorPenaltyNote.className = 'hidden';
+  armorPenaltyNote.textContent = "If you wear armor that you lack proficiency with, you have disadvantage on any ability check, saving throw, or Attack roll that involves Strength or Dexterity, and you can’t cast Spells.";
+  armorFieldsContainer.appendChild(armorPenaltyNote);
+
+  // 4. Notes section (Always Visible)
   const notesWrap = document.createElement('div');
   notesWrap.innerHTML = `<label id="notesLabel">Item Notes / Features</label><textarea id="itemNotes"></textarea>`;
   const notesTextarea = notesWrap.querySelector('textarea');
-  notesTextarea.onchange = () => { /* No direct save on change yet */ };
-
-
+  
   // Function to show/hide fields based on type selection
   function toggleItemFields(selectedType) {
     // Hide all type-specific fields
     wepFieldsContainer.classList.add('hidden');
-    armorFieldsContainer.classList.add('hidden'); // Placeholder
+    armorFieldsContainer.classList.add('hidden');
     
     // Show fields based on selection
     if (selectedType === 'Weapon' || selectedType === 'Magic Weapon') {
       wepFieldsContainer.classList.remove('hidden');
     } else if (selectedType === 'Armor' || selectedType === 'Magic Armor') {
-      // Placeholder logic for Armor
-      // armorFieldsContainer.classList.remove('hidden');
+      armorFieldsContainer.classList.remove('hidden');
+    }
+
+    // Always check the penalty note when showing the armor fields
+    updateArmorPenaltyNote();
+  }
+
+  // Listener for the armor proficiency checkbox
+  profCheckArmor.onchange = updateArmorPenaltyNote;
+  function updateArmorPenaltyNote() {
+    if (profCheckArmor.checked) {
+        armorPenaltyNote.classList.add('hidden');
+    } else if (armorFieldsContainer.classList.contains('hidden') === false) {
+        armorPenaltyNote.classList.remove('hidden');
     }
   }
 
@@ -654,16 +692,26 @@ function renderInventory(root){
       equipped: false 
     };
     
-    // Save Weapon properties
+    // Save WEAPON properties
     if(itemType === 'Weapon' || itemType === 'Magic Weapon') {
       newItem.wepDamageDice = dmgDiceInput.value;
       newItem.wepDamageType = dmgTypeInput.value;
       newItem.wepAbility = abilSelect.value;
-      newItem.wepProficient = profCheck.checked;
+      newItem.wepProficient = profCheckWep.checked;
       newItem.wepBonus = Number(bonusInput.value||0);
       newItem.wepNotes = notesTextarea.value; 
-    } else {
-        // Save generic notes for all other types
+    } 
+    // Save ARMOR properties
+    else if(itemType === 'Armor' || itemType === 'Magic Armor') {
+        newItem.armorAC = Number(acBaseInput.value);
+        newItem.armorDexCap = maxDexInput.value; // Store as string for "None"
+        newItem.armorStrReq = Number(strReqInput.value || 0);
+        newItem.armorProficient = profCheckArmor.checked;
+        newItem.armorStealthDis = stealthDisCheck.checked;
+        newItem.wepNotes = notesTextarea.value;
+    }
+    // Save generic notes for all other types
+    else {
         newItem.wepNotes = notesTextarea.value;
     }
 
@@ -678,14 +726,14 @@ function renderInventory(root){
   
   // Grid 1: Name, Type, Weight, Add Button
   const weightInputDiv = weightWrap.querySelector('input');
-  weightInputDiv.style.width = 'calc(100% - 10px)'; // Adjust width to match input function helper padding
+  weightInputDiv.style.width = 'calc(100% - 10px)'; 
   
   itemAddGrid1.append(nameWrap, typeSelectWrap, weightWrap, addBtn);
   items.appendChild(itemAddGrid1);
   
   // Add containers for dynamic fields
   items.appendChild(wepFieldsContainer);
-  items.appendChild(armorFieldsContainer); // Placeholder
+  items.appendChild(armorFieldsContainer);
   
   // Notes section
   notesWrap.style.marginTop = '12px';
