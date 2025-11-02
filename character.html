@@ -115,7 +115,10 @@ function defState(){
     skills:{ acrobatics:false, animal:false, arcana:false, athletics:true, deception:false, history:false, insight:false, intimidation:true, investigation:false, medicine:false, nature:false, perception:false, performance:false, persuasion:false, religion:false, sleight:false, stealth:false, survival:false },
     combat:{ ac:10, hpMax:12, hp:12, temp:0, hitDie:'d10', hitDice:1, initiative:2, speed:30, death:{success:0, fail:0} },
     attacks:[],
-    inventory:{ coins:{cp:0,sp:0,gp:15,pp:0}, items:[], armor:'None', shield:false, carry:[] },
+    inventory:{ coins:{cp:0,sp:0,gp:15,pp:0}, 
+      items:[], // Item structure now: {id, name, weight, type, equipped}
+      armor:'None', shield:false, carry:[] 
+    },
     features:[],
     spellcasting:{ casterType:'none', ability:'int', dc:10, atk:2, slots:{1:2}, known:[], prepared:[], notes:'' },
     notes:[],
@@ -495,17 +498,77 @@ function renderInventory(root){
 
   const items=document.createElement('div'); items.className='card'; items.innerHTML='<h3>Pack</h3>';
   const add=document.createElement('div'); add.className='row';
+  
+  // New item entry fields
+  const itemTypes = ['Weapon','Armor','Shield','Consumable/Ammo','Focus/Tools','Gear','Magic Weapon','Magic Armor','Wondrous Item'];
   const name=document.createElement('input'); name.placeholder='Item name';
-  const wt=document.createElement('input'); wt.type='number'; wt.placeholder='Weight';
-  const addBtn=document.createElement('button'); addBtn.className='btn primary'; addBtn.textContent='Add';
-  addBtn.onclick=()=>{ if(!name.value){ toast('Item name required'); return; } state.inventory.items.push({id:id(), name:name.value, weight:Number(wt.value||0)}); save(); render(); };
-  add.append(name,wt,addBtn); items.appendChild(add);
-  const table=document.createElement('table'); table.innerHTML='<thead><tr><th>Name</th><th>Weight</th><th></th></tr></thead><tbody></tbody>';
+  const typeSelect = select('Item Type', itemTypes[0], itemTypes, v=>{ typeSelect.value=v; });
+  const wt=document.createElement('input'); wt.type='number'; wt.placeholder='Weight (lbs)';
+
+  const addBtn=document.createElement('button'); addBtn.className='btn primary'; addBtn.textContent='Add Item';
+  addBtn.onclick=()=>{ 
+    if(!name.value){ toast('Item name required'); return; } 
+    state.inventory.items.push({
+      id:id(), 
+      name:name.value, 
+      type:typeSelect.querySelector('select').value, // Get selected value
+      weight:Number(wt.value||0),
+      equipped: false // New property for equipped status
+    }); 
+    save(); render(); 
+  };
+  
+  // Arrange new fields for adding items
+  const itemAddGrid = document.createElement('div'); itemAddGrid.className='grid cols-4';
+  itemAddGrid.style.alignItems='flex-end';
+  
+  // Wrap name and type in divs to make them occupy full grid columns
+  const nameWrap = document.createElement('div'); nameWrap.appendChild(input('Name', '', v=>name.value=v));
+  nameWrap.querySelector('input').placeholder = 'Item name';
+  nameWrap.querySelector('input').value = name.value;
+  nameWrap.querySelector('input').onchange = null; // Clear existing onchange as we use the variable
+  
+  const typeWrap = document.createElement('div');
+  typeWrap.appendChild(typeSelect);
+  typeSelect.querySelector('select').style.marginTop = '6px'; // Align select element
+  
+  const weightWrap = document.createElement('div'); 
+  weightWrap.appendChild(num('Weight', '', v=>wt.value=v));
+  weightWrap.querySelector('input').placeholder = 'Weight (lbs)';
+  
+  itemAddGrid.append(nameWrap, typeWrap, weightWrap, addBtn);
+  items.appendChild(itemAddGrid);
+
+
+  // Table of current items
+  const table=document.createElement('table'); table.innerHTML='<thead><tr><th>Name</th><th>Type</th><th>Weight</th><th>Equip</th><th></th></tr></thead><tbody></tbody>';
   const tb=table.querySelector('tbody');
   state.inventory.items.forEach(i=>{
-    const tr=document.createElement('tr'); tr.innerHTML=`<td>${i.name}</td><td>${i.weight||0}</td><td><button class="btn small danger">Delete</button></td>`; tr.querySelector('button').onclick=()=>{ state.inventory.items=state.inventory.items.filter(x=>x.id!==i.id); save(); render(); };
+    const tr=document.createElement('tr'); 
+
+    // Equipped checkbox handler
+    const toggleEquip = (e) => {
+      i.equipped = e.target.checked;
+      save(); 
+      // render(); // Optionally re-render the whole sheet to apply stat effects later
+    };
+
+    tr.innerHTML=`
+      <td>${i.name}</td>
+      <td>${i.type||'Gear'}</td>
+      <td>${i.weight||0}</td>
+      <td style="text-align:center;"><input type="checkbox" ${i.equipped?'checked':''}></td>
+      <td><button class="btn small danger">Delete</button></td>
+    `; 
+    tr.querySelector('input[type="checkbox"]').onchange=toggleEquip;
+    tr.querySelector('button').onclick=()=>{ 
+      state.inventory.items=state.inventory.items.filter(x=>x.id!==i.id); 
+      save(); 
+      render(); 
+    };
     tb.appendChild(tr);
-  }); items.appendChild(table); root.appendChild(items);
+  }); 
+  items.appendChild(table); root.appendChild(items);
 }
 
 function renderNotes(root){
