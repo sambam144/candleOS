@@ -501,42 +501,40 @@ function renderInventory(root){
   
   // New item entry fields
   const itemTypes = ['Weapon','Armor','Shield','Consumable/Ammo','Focus/Tools','Gear','Magic Weapon','Magic Armor','Wondrous Item'];
-  const name=document.createElement('input'); name.placeholder='Item name';
-  const typeSelect = select('Item Type', itemTypes[0], itemTypes, v=>{ typeSelect.value=v; });
-  const wt=document.createElement('input'); wt.type='number'; wt.placeholder='Weight (lbs)';
+  
+  // Create all inputs using the helper functions, which return a wrapper div
+  const nameWrap = input('Name', '', v=>{});
+  const typeSelectWrap = select('Item Type', itemTypes[0], itemTypes, v=>{});
+  const weightWrap = num('Weight', '', v=>{});
 
+  // Get the actual HTML input elements from the wrapper divs for value retrieval
+  const nameInput = nameWrap.querySelector('input[type="text"]');
+  const wtInput = weightWrap.querySelector('input[type="number"]');
+
+  nameInput.placeholder = 'Item name';
+  wtInput.placeholder = 'Weight (lbs)';
+  
   const addBtn=document.createElement('button'); addBtn.className='btn primary'; addBtn.textContent='Add Item';
   addBtn.onclick=()=>{ 
-    if(!name.value){ toast('Item name required'); return; } 
+    // FIX: Use the value from the explicit input element (nameInput)
+    if(!nameInput.value){ toast('Item name required'); return; } 
     state.inventory.items.push({
       id:id(), 
-      name:name.value, 
-      type:typeSelect.querySelector('select').value, // Get selected value
-      weight:Number(wt.value||0),
-      equipped: false // New property for equipped status
+      name:nameInput.value, 
+      type:typeSelectWrap.querySelector('select').value, 
+      weight:Number(wtInput.value||0),
+      equipped: false 
     }); 
-    save(); render(); 
+    save(); 
+    render(); 
   };
   
   // Arrange new fields for adding items
   const itemAddGrid = document.createElement('div'); itemAddGrid.className='grid cols-4';
   itemAddGrid.style.alignItems='flex-end';
   
-  // Wrap name and type in divs to make them occupy full grid columns
-  const nameWrap = document.createElement('div'); nameWrap.appendChild(input('Name', '', v=>name.value=v));
-  nameWrap.querySelector('input').placeholder = 'Item name';
-  nameWrap.querySelector('input').value = name.value;
-  nameWrap.querySelector('input').onchange = null; // Clear existing onchange as we use the variable
-  
-  const typeWrap = document.createElement('div');
-  typeWrap.appendChild(typeSelect);
-  typeSelect.querySelector('select').style.marginTop = '6px'; // Align select element
-  
-  const weightWrap = document.createElement('div'); 
-  weightWrap.appendChild(num('Weight', '', v=>wt.value=v));
-  weightWrap.querySelector('input').placeholder = 'Weight (lbs)';
-  
-  itemAddGrid.append(nameWrap, typeWrap, weightWrap, addBtn);
+  // Append the wrapper divs and the button
+  itemAddGrid.append(nameWrap, typeSelectWrap, weightWrap, addBtn);
   items.appendChild(itemAddGrid);
 
 
@@ -550,7 +548,7 @@ function renderInventory(root){
     const toggleEquip = (e) => {
       i.equipped = e.target.checked;
       save(); 
-      // render(); // Optionally re-render the whole sheet to apply stat effects later
+      // render(); // We'll re-render once stats are implemented
     };
 
     tr.innerHTML=`
