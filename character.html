@@ -686,6 +686,7 @@ function renderInventory(root){
   const typeSelectWrap = select('Item Type', itemTypes[0], itemTypes, (v) => { toggleItemFields(v); });
   const weightWrap = num('Weight', '', v=>{});
   const attunementReqWrap = select('Requires Attunement?', 'No', ['No', 'Yes'], v=>{}); // New Attunement Req field
+  attunementReqWrap.classList.add('hidden'); // NEW: Hide by default
   
   // Get the actual HTML input elements for value retrieval
   const nameInput = nameWrap.querySelector('input[type="text"]');
@@ -788,19 +789,27 @@ function renderInventory(root){
   notesWrap.innerHTML = `<label id="notesLabel">Item Notes / Features</label><textarea id="itemNotes"></textarea>`;
   const notesTextarea = notesWrap.querySelector('textarea');
   
-  // Function to show/hide fields based on type selection
+  // MODIFIED: Function to show/hide fields based on type selection
   function toggleItemFields(selectedType) {
     // Hide all type-specific fields
     wepFieldsContainer.classList.add('hidden');
     armorFieldsContainer.classList.add('hidden');
-    wondrousFieldsContainer.classList.add('hidden'); // NEW
+    wondrousFieldsContainer.classList.add('hidden');
+    
+    // NEW: Show/hide attunement field based on magical type
+    const magicalTypes = ['Magic Weapon', 'Magic Armor', 'Wondrous Item'];
+    if (magicalTypes.includes(selectedType)) {
+      attunementReqWrap.classList.remove('hidden');
+    } else {
+      attunementReqWrap.classList.add('hidden');
+    }
     
     // Show fields based on selection
     if (selectedType === 'Weapon' || selectedType === 'Magic Weapon') {
       wepFieldsContainer.classList.remove('hidden');
     } else if (selectedType === 'Armor' || selectedType === 'Magic Armor') {
       armorFieldsContainer.classList.remove('hidden');
-    } else if (selectedType === 'Wondrous Item') { // NEW
+    } else if (selectedType === 'Wondrous Item') {
       wondrousFieldsContainer.classList.remove('hidden');
     }
 
