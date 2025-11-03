@@ -770,7 +770,9 @@ function renderInventory(root){
     // Equipped checkbox handler
     const toggleEquip = (e) => {
       i.equipped = e.target.checked;
+      recalcBasics(); // Recalculate basics (including speed)
       save(); 
+      syncHeader(); // FIX: Call syncHeader immediately after save for instant header update
       render(); 
     };
 
