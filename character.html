@@ -136,6 +136,7 @@
 <script>
 // ---------- State ----------
 const STORAGE_KEY = 'cs_v1';
+const THEME_KEY = 'cs_theme_v1'; // NEW: Key for theme
 let state = load();
 let routeId = 'builder';
 
@@ -686,7 +687,7 @@ function renderInventory(root){
   const typeSelectWrap = select('Item Type', itemTypes[0], itemTypes, (v) => { toggleItemFields(v); });
   const weightWrap = num('Weight', '', v=>{});
   const attunementReqWrap = select('Requires Attunement?', 'No', ['No', 'Yes'], v=>{}); // New Attunement Req field
-  attunementReqWrap.classList.add('hidden'); // NEW: Hide by default
+  attunementReqWrap.classList.add('hidden'); // MODIFIED: Hide by default
   
   // Get the actual HTML input elements for value retrieval
   const nameInput = nameWrap.querySelector('input[type="text"]');
@@ -796,7 +797,7 @@ function renderInventory(root){
     armorFieldsContainer.classList.add('hidden');
     wondrousFieldsContainer.classList.add('hidden');
     
-    // NEW: Show/hide attunement field based on magical type
+    // MODIFIED: Show/hide attunement field based on magical type
     const magicalTypes = ['Magic Weapon', 'Magic Armor', 'Wondrous Item'];
     if (magicalTypes.includes(selectedType)) {
       attunementReqWrap.classList.remove('hidden');
@@ -1057,6 +1058,27 @@ function rollDice(formula){
 function log(text){ state.log.unshift({ id:id(), time:new Date().toLocaleString(), text }); if(state.log.length>200) state.log.pop(); save(); renderLog(); }
 function renderLog(){ const box=document.getElementById('logBox'); if(!box) return; box.innerHTML = state.log.map(e=>`<div class="row"><span class="note" style="width:170px">${e.time}</span><span>${e.text}</span></div>`).join(''); }
 
+// NEW: Function to apply saved theme on load
+function applyTheme(){
+  const html = document.documentElement;
+  const savedTheme = localStorage.getItem(THEME_KEY);
+  
+  // Clear existing theme classes first
+  html.classList.remove('light-theme', 'parchment-theme');
+
+  if (savedTheme === 'light') {
+    html.classList.add('light-theme');
+  } else if (savedTheme === 'parchment') {
+    html.classList.add('parchment-theme');
+  } else if (savedTheme === 'dark') {
+    // Dark is default, no class needed
+  } else {
+    // No theme saved, apply default (Parchment)
+    html.classList.add('parchment-theme');
+    localStorage.setItem(THEME_KEY, 'parchment');
+  }
+}
+
 // ---------- Theme, print, import/export ----------
 const themeBtn=document.getElementById('themeBtn');
 const printBtn=document.getElementById('printBtn');
@@ -1064,13 +1086,35 @@ const importFile=document.getElementById('importFile');
 const exportBtn=document.getElementById('exportBtn');
 const resetBtn=document.getElementById('resetBtn');
 
-themeBtn.onclick=()=>{ const html=document.documentElement; if(html.classList.contains('light-theme')){ html.classList.remove('light-theme'); html.classList.add('parchment-theme'); } else if(html.classList.contains('parchment-theme')){ html.classList.remove('parchment-theme'); } else { html.classList.add('light-theme'); } };
+// MODIFIED: themeBtn.onclick now saves to localStorage
+themeBtn.onclick=()=>{ 
+  const html = document.documentElement;
+  let nextTheme = 'light'; // Default next theme if current is dark
+  
+  if (html.classList.contains('light-theme')) {
+    html.classList.remove('light-theme');
+    html.classList.add('parchment-theme');
+    nextTheme = 'parchment';
+  } else if (html.classList.contains('parchment-theme')) {
+    html.classList.remove('parchment-theme');
+    // Now dark theme
+    nextTheme = 'dark';
+  } else {
+    // Was dark, now light
+    html.classList.add('light-theme');
+    nextTheme = 'light';
+  }
+  
+  localStorage.setItem(THEME_KEY, nextTheme);
+};
+
 printBtn.onclick=()=>{ window.print(); };
 exportBtn.onclick=()=>{ const data=new Blob([JSON.stringify(state,null,2)],{type:'application/json'}); const a=document.createElement('a'); a.href=URL.createObjectURL(data); a.download=`${state.info.name||'character'}.json`; a.click(); URL.revokeObjectURL(a.href); };
 importFile.onchange=(e)=>{ const f=e.target.files[0]; if(!f) return; const r=new FileReader(); r.onload = ev=>{ try{ const js=JSON.parse(ev.target.result); state={...defState(), ...js}; save(); render(); toast('Import complete'); }catch(err){ alert('Invalid JSON'); } }; r.readAsText(f); };
 resetBtn.onclick=reset;
 
 // ---------- Boot ----------
+applyTheme(); // NEW: Apply theme on boot
 recalcFromClass(); recalcBasics(); buildNav(); render();
 </script>
 </body>
