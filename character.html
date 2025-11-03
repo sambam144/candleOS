@@ -201,9 +201,60 @@ function mod(score){ return Math.floor((Number(score||10)-10)/2); }
 function displayMod(n){ return n>=0? `+${n}`: `${n}`; }
 function profBonus(){ const L=Number(state.info.level||1); return 2 + Math.floor((L-1)/4); }
 function setAbility(which, val){ state.abilities[which]=Number(val||10); save(); render(); }
+
+// Function to process a comma-separated string of abi modifiers (e.g., "str+2, con+1")
+function parseAbiMods(abiString){
+    const mods = {};
+    if (!abiString) return mods;
+    abiString.split(',').forEach(mod => {
+        const match = mod.trim().match(/^([a-z]{3})([+-]?)(\d+)$/i);
+        if (match) {
+            const ability = match[1].toLowerCase();
+            const sign = match[2];
+            const value = parseInt(match[3]);
+            if (sign === '+') {
+                mods[ability] = (mods[ability] || 0) + value;
+            } else if (sign === '-') {
+                mods[ability] = (mods[ability] || 0) - value;
+            }
+        }
+    });
+    return mods;
+}
+
+function totalAbility(ability){
+  let base = Number(state.abilities[ability]||10);
+  const asi = applyRace(state.info.race).asi[ability]||0;
+  base += asi;
+  
+  // Apply Wondrous Item Modifiers (Set Score and Flat Bonus)
+  const equippedWondrous = state.inventory.items.filter(i => i.equipped && i.attuned && i.type === 'Wondrous Item');
+  
+  equippedWondrous.forEach(item => {
+    // 1. Apply Set Score (e.g., CON=19) - OVERRIDES base score
+    if (item.setAbility) {
+        const sets = item.setAbility.split(',').map(s => s.trim().match(/^([a-z]{3})=(\d+)$/i)).filter(Boolean);
+        sets.forEach(match => {
+            if (match[1].toLowerCase() === ability) {
+                const fixedValue = parseInt(match[2]);
+                base = Math.max(base, fixedValue); // Typically items only increase it, so we take the max
+            }
+        });
+    }
+
+    // 2. Apply Flat Bonus (e.g., STR+2)
+    if (item.abiBonus) {
+        const bonuses = parseAbiMods(item.abiBonus);
+        base += bonuses[ability] || 0;
+    }
+  });
+
+  return base;
+}
+
 function calcAC(){
   // Simple calc: base 10 + Dex + armor + shield
-  const dex = mod(state.abilities.dex);
+  const dex = mod(totalAbility('dex'));
   let base = 10 + dex;
   const armor = state.inventory.armor||'None';
   const ARMOR = { 'None':[0,Infinity], 'Light':[1,Infinity], 'Medium':[2,2], 'Heavy':[3,0] };
@@ -215,14 +266,21 @@ function calcAC(){
     base = a.flat + dexUse;
   }
   if(state.inventory.shield) base += 2;
+  
+  // Apply Wondrous Item AC Bonus
+  const equippedWondrous = state.inventory.items.filter(i => i.equipped && i.attuned && i.type === 'Wondrous Item');
+  equippedWondrous.forEach(item => {
+      base += item.acBonus || 0;
+  });
+
   state.combat.ac = base; return base;
 }
 
-function saveThrow(ability){ const trained = state.saves[ability]; return mod(state.abilities[ability]) + (trained? profBonus():0); }
+function saveThrow(ability){ const trained = state.saves[ability]; return mod(totalAbility(ability)) + (trained? profBonus():0); }
 const SKILL_MAP = {
   acrobatics:['dex'], animal:['wis'], arcana:['int'], athletics:['str'], deception:['cha'], history:['int'], insight:['wis'], intimidation:['cha'], investigation:['int'], medicine:['wis'], nature:['int'], perception:['wis'], performance:['cha'], persuasion:['cha'], religion:['int'], sleight:['dex'], stealth:['dex'], survival:['wis']
 };
-function skillBonus(key){ const [ability] = SKILL_MAP[key]; const trained = state.skills[key]; return mod(state.abilities[ability]) + (trained? profBonus():0); }
+function skillBonus(key){ const [ability] = SKILL_MAP[key]; const trained = state.skills[key]; return mod(totalAbility(ability)) + (trained? profBonus():0); }
 
 function hitDieForClass(cls){
   const m = {Barbarian:'d12', Fighter:'d10', Paladin:'d10', Ranger:'d10', Bard:'d8', Cleric:'d8', Druid:'d8', Monk:'d8', Rogue:'d8', Warlock:'d8', Wizard:'d6', Sorcerer:'d6', Artificer:'d8'}; return m[cls]||'d8';
@@ -264,29 +322,11 @@ function applyRace(r){
   return R[r]||R.Human;
 }
 
-function totalAbility(ability){
-  const base = Number(state.abilities[ability]||10);
-  const asi = applyRace(state.info.race).asi[ability]||0;
-  return base + asi;
-}
-
-function recalcFromClass(){
-  const cls = state.info.class;
-  state.combat.hitDie = hitDieForClass(cls);
-  state.spellcasting.casterType = casterTypeForClass(cls);
-  state.spellcasting.ability = spellAbilityForClass(cls);
-  state.spellcasting.slots = slotsForLevel(state.spellcasting.casterType, state.info.level);
-  // Saving throws by class
-  const strong = {
-    Barbarian:['str','con'], Bard:['dex','cha'], Cleric:['wis','cha'], Druid:['int','wis'], Fighter:['str','con'], Monk:['str','dex'], Paladin:['wis','cha'], Ranger:['str','dex'], Rogue:['dex','int'], Sorcerer:['con','cha'], Warlock:['wis','cha'], Wizard:['int','wis'], Artificer:['con','int']
-  };
-  const keys = ['str','dex','con','int','wis','cha'];
-  keys.forEach(k=> state.saves[k] = strong[cls]?.includes(k) || false );
-}
 
 function recalcBasics(){
   // Base Speed from race
   let speed = applyRace(state.info.race).speed;
+  let initiative = mod(totalAbility('dex'));
   
   // Apply Speed Penalty from Armor
   const strScore = totalAbility('str');
@@ -300,9 +340,18 @@ function recalcBasics(){
     }
   });
 
+  // Apply Wondrous Item Speed and Initiative Bonuses
+  const equippedWondrous = state.inventory.items.filter(i => i.equipped && i.attuned && i.type === 'Wondrous Item');
+  equippedWondrous.forEach(item => {
+    speed += item.speedBonus || 0;
+    // Initiative is Mod + bonus. We've calculated the base mod above.
+    initiative += item.initBonus || 0; 
+  });
+
+
   state.combat.speed = Math.max(0, speed);
-  // Initiative = Dex mod
-  state.combat.initiative = mod(totalAbility('dex'));
+  state.combat.initiative = initiative;
+  
   // HP baseline if first time
   const die = state.combat.hitDie||'d10';
   const dieMax = Number(die.replace('d',''));
@@ -735,7 +784,7 @@ function renderInventory(root){
   const addBtn=document.createElement('button'); addBtn.className='btn primary'; addBtn.textContent='Add Item';
   addBtn.onclick=()=> { 
     const itemType = typeSelect.value; 
-    
+
     if(!nameInput.value || itemType === 'Select Item Type'){ 
         toast('Name and Item Type required'); 
         return; 
@@ -821,7 +870,7 @@ function renderInventory(root){
 
 
   // Table of current items
-  const table=document.createElement('table'); table.innerHTML='<thead><tr><th>Name</th><th>Type</th><th>Weight</th><th>Attune Req</th><th>Equip</th><th></th></tr></thead><tbody></tbody>';
+  const table=document.createElement('table'); table.innerHTML='<thead><tr><th>Name</th><th>Type</th><th>Weight</th><th>Attune Req</th><th>Attune</th><th>Equip</th><th></th></tr></thead><tbody></tbody>'; // Fixed column headers
   const tb=table.querySelector('tbody');
   state.inventory.items.forEach(i=>{
     const tr=document.createElement('tr'); 
@@ -845,8 +894,8 @@ function renderInventory(root){
       <td>${i.name}</td>
       <td>${i.type||'Gear'}</td>
       <td>${i.weight||0}</td>
-      <td style="text-align:center;">${i.attunementRequired}</td>
-      <td style="text-align:center;"><input type="checkbox" data-attune-check="true" ${i.attuned?'checked':''} ${i.attunementRequired === 'Yes' ? '' : 'disabled'}></td>
+      <td style="text-align:center;">${i.attunementRequired === 'Yes' ? 'Yes' : 'No'}</td>
+      <td style="text-align:center;"><input type="checkbox" data-attune-check="true" ${i.attuned?'checked':''} ${i.attunementRequired === 'No' ? 'disabled' : ''}></td>
       <td style="text-align:center;"><input type="checkbox" ${i.equipped?'checked':''} ${i.attunementRequired === 'Yes' && i.attuned === false ? 'disabled' : ''}></td>
       <td><button class="btn small danger" data-id="${i.id}">Delete</button></td>
     `; 
@@ -875,7 +924,7 @@ function renderInventory(root){
     if(i.wepNotes){
       const notesTr = document.createElement('tr');
       notesTr.className = 'inventory-notes';
-      notesTr.innerHTML = `<td colspan="6">${i.wepNotes}</td>`; // colspan is 6 now
+      notesTr.innerHTML = `<td colspan="7">${i.wepNotes}</td>`; // colspan is 7 now
       tb.appendChild(notesTr);
     }
   }); 
