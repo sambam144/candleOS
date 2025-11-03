@@ -150,7 +150,7 @@ function defState(){
     attacks:[],
     inventory:{ coins:{cp:0,sp:0,gp:15,pp:0}, 
       items:[], // Item structure: {id, name, weight, type, equipped, ...typeSpecificData}
-      armor:'None', shield:false, carry:[] 
+      carry:[] 
     },
     features:[],
     spellcasting:{ casterType:'none', ability:'int', dc:10, atk:2, slots:{1:2}, known:[], prepared:[], notes:'' },
@@ -203,29 +203,43 @@ function displayMod(n){ return n>=0? `+${n}`: `${n}`; }
 function profBonus(){ const L=Number(state.info.level||1); return 2 + Math.floor((L-1)/4); }
 function setAbility(which, val){ state.abilities[which]=Number(val||10); save(); render(); }
 
-// MODIFIED: calcAC now calculates wondrous bonuses internally
+// MODIFIED: calcAC now calculates based on equipped items, not legacy state
 function calcAC(){
-  // Simple calc: base 10 + Dex + armor + shield
   const dex = mod(totalAbility('dex')); // totalAbility now includes wondrous buffs
-  let base = 10 + dex;
-  const armor = state.inventory.armor||'None';
-  const ARMOR = { 'None':[0,Infinity], 'Light':[1,Infinity], 'Medium':[2,2], 'Heavy':[3,0] };
-  // encode as [armorFlat, dexCap], where 1 means +11? Better explicit:
-  const MAP = { 'None':{flat:0, dexCap:null}, 'Leather (Light)':{flat:11, dexCap:null}, 'Studded (Light)':{flat:12, dexCap:null}, 'Hide (Medium)':{flat:12, dexCap:2}, 'Chain Shirt (Medium)':{flat:13, dexCap:2}, 'Scale (Medium)':{flat:14, dexCap:2}, 'Breastplate (Medium)':{flat:14, dexCap:2}, 'Half Plate (Medium)':{flat:15, dexCap:2}, 'Chain Mail (Heavy)':{flat:16, dexCap:0}, 'Splint (Heavy)':{flat:17, dexCap:0}, 'Plate (Heavy)':{flat:18, dexCap:0} };
-  if(MAP[armor]){
-    const a=MAP[armor];
-    const dexUse = a.dexCap===null? dex: Math.min(dex, a.dexCap);
-    base = a.flat + dexUse;
-  }
-  if(state.inventory.shield) base += 2;
+  let base = 10 + dex; // Unarmored base
   
-  // NEW: Apply Wondrous Item AC Bonus
+  // 1. Check for equipped Armor
+  const equippedArmor = state.inventory.items.find(i => 
+    i.equipped && (i.type === 'Armor' || i.type === 'Magic Armor')
+  );
+
+  if (equippedArmor) {
+    const ac = Number(equippedArmor.armorAC || 10);
+    const cap = equippedArmor.armorDexCap; // 'None', '2', '0', etc.
+    const bonus = Number(equippedArmor.armorBonus || 0);
+    
+    let dexUse = dex;
+    if (cap !== 'None' && cap !== null && cap !== undefined) {
+        dexUse = Math.min(dex, Number(cap));
+    }
+    
+    base = ac + dexUse + bonus;
+  }
+
+  // 2. Check for equipped Shield
+  const equippedShield = state.inventory.items.find(i => i.equipped && i.type === 'Shield');
+  if (equippedShield) {
+    base += 2;
+  }
+  
+  // 3. Apply Wondrous Item AC Bonus (e.g., Ring of Protection, Cloak of Protection)
   const activeItems = getActiveWondrousItems();
   activeItems.forEach(item => {
       base += Number(item.acBonus || 0);
   });
   
-  state.combat.ac = base; return base;
+  state.combat.ac = base; 
+  return base;
 }
 
 function saveThrow(ability){ const trained = state.saves[ability]; return mod(totalAbility(ability)) + (trained? profBonus():0); }
@@ -664,15 +678,14 @@ function renderSpells(root){
   }); book.appendChild(list); root.appendChild(book);
 }
 
+// MODIFIED: Removed legacy armor/shield controls
 function renderInventory(root){
   const card=document.createElement('div'); card.className='card'; card.innerHTML='<h3>Inventory & Equipment</h3>'; root.appendChild(card);
-  const g=document.createElement('div'); g.className='grid cols-3'; card.appendChild(g);
-  const armorList=['None','Leather (Light)','Studded (Light)','Hide (Medium)','Chain Shirt (Medium)','Scale (Medium)','Breastplate (Medium)','Half Plate (Medium)','Chain Mail (Heavy)','Splint (Heavy)','Plate (Heavy)'];
-  g.appendChild(select('Armor', state.inventory.armor, armorList, v=>{ state.inventory.armor=v; recalcBasics(); save(); render(); }));
-  const sh = document.createElement('div'); sh.innerHTML = `<label>Shield</label><input type="checkbox" ${state.inventory.shield?'checked':''}>`;
-  sh.querySelector('input').onchange=e=>{ state.inventory.shield=e.target.checked; recalcBasics(); save(); render(); };
-  g.appendChild(sh);
+  
+  // REMOVED: grid 'g', armorList, select('Armor'...), and 'sh' (shield checkbox)
+
   const coins = document.createElement('div'); coins.className='grid cols-4'; coins.innerHTML='<div><label>CP</label><input type="number"></div><div><label>SP</label><input type="number"></div><div><label>GP</label><input type="number"></div><div><label>PP</label><input type="number"></div>';
+  coins.style.marginBottom = '12px'; // Added margin for spacing
   const [cp,sp,gp,pp] = coins.querySelectorAll('input'); cp.value=state.inventory.coins.cp; sp.value=state.inventory.coins.sp; gp.value=state.inventory.coins.gp; pp.value=state.inventory.coins.pp;
   [cp,sp,gp,pp].forEach((i,idx)=> i.onchange=()=>{ const keys=['cp','sp','gp','pp']; state.inventory.coins[keys[idx]]=Number(i.value||0); save(); });
   card.appendChild(coins);
