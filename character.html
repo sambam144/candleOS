@@ -285,8 +285,22 @@ function recalcFromClass(){
 }
 
 function recalcBasics(){
-  // Speed from race
-  state.combat.speed = applyRace(state.info.race).speed;
+  // Base Speed from race
+  let speed = applyRace(state.info.race).speed;
+  
+  // Apply Speed Penalty from Armor
+  const strScore = totalAbility('str');
+  const equippedArmor = state.inventory.items.filter(i => i.equipped && (i.type === 'Armor' || i.type === 'Magic Armor'));
+  
+  equippedArmor.forEach(armor => {
+    const strReq = armor.armorStrReq || 0;
+    // Check if Heavy Armor (STR Req >= 13 is a proxy for heavy armor rules)
+    if (strReq >= 13 && strScore < strReq) {
+      speed -= 10;
+    }
+  });
+
+  state.combat.speed = Math.max(0, speed);
   // Initiative = Dex mod
   state.combat.initiative = mod(totalAbility('dex'));
   // HP baseline if first time
@@ -620,13 +634,14 @@ function renderInventory(root){
   
   const acBaseWrap = num('Base AC', '10', v=>{});
   const maxDexWrap = input('Max Dex Mod (e.g., 2, None)', 'None', v=>{});
-  const strReqWrap = num('STR Req (e.g., 13)', '0', v=>{});
+  const strReqWrap = num('STR Req (0 for None)', '0', v=>{});
   const profCheckArmorWrap = document.createElement('div');
   profCheckArmorWrap.innerHTML = `<label>Proficient?</label><input type="checkbox" id="armorProfCheck">`;
   const stealthDisWrap = document.createElement('div');
   stealthDisWrap.innerHTML = `<label>Stealth Disadvantage?</label><input type="checkbox">`;
+  const armorBonusNumWrap = num('Magic Bonus (+X)', '0', v=>{});
 
-  armorFieldsContainer.append(acBaseWrap, maxDexWrap, strReqWrap, profCheckArmorWrap, stealthDisWrap);
+  armorFieldsContainer.append(acBaseWrap, maxDexWrap, strReqWrap, profCheckArmorWrap, stealthDisWrap, armorBonusNumWrap);
 
   // Get armor elements for value retrieval
   const acBaseInput = acBaseWrap.querySelector('input[type="number"]');
@@ -634,6 +649,7 @@ function renderInventory(root){
   const strReqInput = strReqWrap.querySelector('input[type="number"]');
   const profCheckArmor = profCheckArmorWrap.querySelector('input[type="checkbox"]');
   const stealthDisCheck = stealthDisWrap.querySelector('input[type="checkbox"]');
+  const armorBonusInput = armorBonusNumWrap.querySelector('input[type="number"]');
 
   // Armor Penalty Note (Dynamically shown)
   const armorPenaltyNote = document.createElement('div');
@@ -641,6 +657,7 @@ function renderInventory(root){
   armorPenaltyNote.className = 'hidden';
   armorPenaltyNote.textContent = "If you wear armor that you lack proficiency with, you have disadvantage on any ability check, saving throw, or Attack roll that involves Strength or Dexterity, and you can’t cast Spells.";
   armorFieldsContainer.appendChild(armorPenaltyNote);
+
 
   // 4. Notes section (Always Visible)
   const notesWrap = document.createElement('div');
@@ -708,6 +725,7 @@ function renderInventory(root){
         newItem.armorStrReq = Number(strReqInput.value || 0);
         newItem.armorProficient = profCheckArmor.checked;
         newItem.armorStealthDis = stealthDisCheck.checked;
+        newItem.armorBonus = Number(armorBonusInput.value || 0); // New field for magic armor
         newItem.wepNotes = notesTextarea.value;
     }
     // Save generic notes for all other types
