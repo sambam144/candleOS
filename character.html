@@ -189,9 +189,9 @@ function syncHeader(){
   const lvl = state.info.level;
   document.getElementById('kLevel').textContent = lvl;
   document.getElementById('kProf').textContent = displayMod(profBonus());
-  document.getElementById('kAC').textContent = calcAC();
+  document.getElementById('kAC').textContent = calcAC(); // Recalculates AC including wondrous items
   document.getElementById('kHP').textContent = `${state.combat.hp}/${state.combat.hpMax}`;
-  document.getElementById('kSpeed').textContent = state.combat.speed;
+  document.getElementById('kSpeed').textContent = state.combat.speed; // This is set by recalcBasics
 }
 
 function toast(msg){ const t=document.createElement('div'); t.className='toast'; t.textContent=msg; document.body.appendChild(t); setTimeout(()=>t.remove(),2000); }
@@ -201,9 +201,11 @@ function mod(score){ return Math.floor((Number(score||10)-10)/2); }
 function displayMod(n){ return n>=0? `+${n}`: `${n}`; }
 function profBonus(){ const L=Number(state.info.level||1); return 2 + Math.floor((L-1)/4); }
 function setAbility(which, val){ state.abilities[which]=Number(val||10); save(); render(); }
+
+// MODIFIED: calcAC now calculates wondrous bonuses internally
 function calcAC(){
   // Simple calc: base 10 + Dex + armor + shield
-  const dex = mod(state.abilities.dex);
+  const dex = mod(totalAbility('dex')); // totalAbility now includes wondrous buffs
   let base = 10 + dex;
   const armor = state.inventory.armor||'None';
   const ARMOR = { 'None':[0,Infinity], 'Light':[1,Infinity], 'Medium':[2,2], 'Heavy':[3,0] };
@@ -215,14 +217,30 @@ function calcAC(){
     base = a.flat + dexUse;
   }
   if(state.inventory.shield) base += 2;
+  
+  // NEW: Apply Wondrous Item AC Bonus
+  const activeItems = getActiveWondrousItems();
+  activeItems.forEach(item => {
+      base += Number(item.acBonus || 0);
+  });
+  
   state.combat.ac = base; return base;
 }
 
-function saveThrow(ability){ const trained = state.saves[ability]; return mod(state.abilities[ability]) + (trained? profBonus():0); }
+function saveThrow(ability){ const trained = state.saves[ability]; return mod(totalAbility(ability)) + (trained? profBonus():0); }
 const SKILL_MAP = {
   acrobatics:['dex'], animal:['wis'], arcana:['int'], athletics:['str'], deception:['cha'], history:['int'], insight:['wis'], intimidation:['cha'], investigation:['int'], medicine:['wis'], nature:['int'], perception:['wis'], performance:['cha'], persuasion:['cha'], religion:['int'], sleight:['dex'], stealth:['dex'], survival:['wis']
 };
-function skillBonus(key){ const [ability] = SKILL_MAP[key]; const trained = state.skills[key]; return mod(state.abilities[ability]) + (trained? profBonus():0); }
+function skillBonus(key){ const [ability] = SKILL_MAP[key]; const trained = state.skills[key]; return mod(totalAbility(ability)) + (trained? profBonus():0); }
+
+// NEW: Helper function to get active (equipped and attuned) wondrous items
+function getActiveWondrousItems() {
+  return state.inventory.items.filter(i => 
+    i.type === 'Wondrous Item' &&
+    i.equipped &&
+    (i.attunementRequired === 'No' || (i.attunementRequired === 'Yes' && i.attuned))
+  );
+}
 
 function hitDieForClass(cls){
   const m = {Barbarian:'d12', Fighter:'d10', Paladin:'d10', Ranger:'d10', Bard:'d8', Cleric:'d8', Druid:'d8', Monk:'d8', Rogue:'d8', Warlock:'d8', Wizard:'d6', Sorcerer:'d6', Artificer:'d8'}; return m[cls]||'d8';
@@ -264,10 +282,42 @@ function applyRace(r){
   return R[r]||R.Human;
 }
 
+// MODIFIED: totalAbility now includes bonuses and set scores from Wondrous Items
 function totalAbility(ability){
   const base = Number(state.abilities[ability]||10);
   const asi = applyRace(state.info.race).asi[ability]||0;
-  return base + asi;
+  
+  // NEW: Wondrous Item Buffs
+  let wondrousBonus = 0;
+  let wondrousSetScore = 0;
+  const activeItems = getActiveWondrousItems();
+
+  activeItems.forEach(item => {
+    // 1. Handle Bonuses (e.g., "str+2, con+1")
+    if (item.abiBonus) {
+      const bonuses = item.abiBonus.split(',');
+      bonuses.forEach(b => {
+        const [key, val] = b.trim().split('+');
+        if (key === ability && val) {
+          wondrousBonus += Number(val.trim() || 0);
+        }
+      });
+    }
+    
+    // 2. Handle Set Scores (e.g., "con=19")
+    if (item.setAbility) {
+      const sets = item.setAbility.split(',');
+      sets.forEach(s => {
+        const [key, val] = s.trim().split('=');
+        if (key === ability && val) {
+          wondrousSetScore = Math.max(wondrousSetScore, Number(val.trim() || 0));
+        }
+      });
+    }
+  });
+
+  const totalBase = base + asi + wondrousBonus;
+  return Math.max(totalBase, wondrousSetScore);
 }
 
 function recalcFromClass(){
@@ -284,12 +334,21 @@ function recalcFromClass(){
   keys.forEach(k=> state.saves[k] = strong[cls]?.includes(k) || false );
 }
 
+// MODIFIED: recalcBasics now adds wondrous speed bonus and relies on new totalAbility/calcAC
 function recalcBasics(){
+  // Get active wondrous items
+  const activeItems = getActiveWondrousItems();
+
   // Base Speed from race
   let speed = applyRace(state.info.race).speed;
   
+  // NEW: Apply Wondrous Item Speed Bonus
+  activeItems.forEach(item => {
+    speed += Number(item.speedBonus || 0);
+  });
+  
   // Apply Speed Penalty from Armor
-  const strScore = totalAbility('str');
+  const strScore = totalAbility('str'); // This now includes wondrous buffs
   const equippedArmor = state.inventory.items.filter(i => i.equipped && (i.type === 'Armor' || i.type === 'Magic Armor'));
   
   equippedArmor.forEach(armor => {
@@ -301,18 +360,21 @@ function recalcBasics(){
   });
 
   state.combat.speed = Math.max(0, speed);
-  // Initiative = Dex mod
+  
+  // Initiative = Dex mod (will pull from new totalAbility)
   state.combat.initiative = mod(totalAbility('dex'));
+  
   // HP baseline if first time
   const die = state.combat.hitDie||'d10';
   const dieMax = Number(die.replace('d',''));
   const lvl = state.info.level;
-  // Max HP: first level max + con per level thereafter (simple)
+  // Max HP (will pull from new totalAbility('con'))
   const conm = mod(totalAbility('con'));
   const base = dieMax + (lvl-1)*(Math.ceil(dieMax/2)+conm);
   state.combat.hpMax = Math.max(1, base);
   if(state.combat.hp>state.combat.hpMax) state.combat.hp = state.combat.hpMax;
-  calcAC();
+  
+  calcAC(); // This will pull from new calcAC (which pulls from new totalAbility)
 }
 
 // ---------- Views ----------
@@ -432,6 +494,7 @@ function renderSheet(root){
   passives.appendChild(kpi('Initiative', displayMod(state.combat.initiative)));
 }
 
+// MODIFIED: renderCombat now adds global atk/dmg bonuses from wondrous items
 function renderCombat(root){
   const top = document.createElement('div'); top.className='grid cols-3'; root.appendChild(top);
   top.appendChild(numWrap('AC', state.combat.ac, v=>{ state.combat.ac=Number(v); save(); render(); }, true, calcAC()));
@@ -453,6 +516,15 @@ function renderCombat(root){
   
   const table=document.createElement('table'); table.innerHTML='<thead><tr><th>Name</th><th>Attack</th><th>Damage</th><th></th></tr></thead><tbody></tbody>';
   const tb = table.querySelector('tbody');
+  
+  // NEW: Get global bonuses from wondrous items
+  let wondrousAtkBonus = 0;
+  let wondrousDmgBonus = 0;
+  const activeItems = getActiveWondrousItems(); // Helper function
+  activeItems.forEach(item => {
+    wondrousAtkBonus += Number(item.atkBonus || 0);
+    wondrousDmgBonus += Number(item.dmgBonus || 0);
+  });
   
   // Custom Attacks List will now only pull from Inventory (weapons)
   const inventoryWeapons = state.inventory.items.filter(i => i.equipped && (i.type === 'Weapon' || i.type === 'Magic Weapon'))
@@ -478,8 +550,10 @@ function renderCombat(root){
     const abilityScore = w.ability ? totalAbility(w.ability) : totalAbility('str');
     const profBonusVal = w.proficient ? profBonus() : 0;
     
-    const att = mod(abilityScore) + profBonusVal + (w.bonus||0);
-    const dmgMod = mod(abilityScore) + (w.bonus||0);
+    // MODIFIED: Added wondrousAtkBonus
+    const att = mod(abilityScore) + profBonusVal + (w.bonus||0) + wondrousAtkBonus;
+    // MODIFIED: Added wondrousDmgBonus
+    const dmgMod = mod(abilityScore) + (w.bonus||0) + wondrousDmgBonus;
     const damageText = `${w.dice}${dmgMod? (dmgMod>0?`+${dmgMod}`:dmgMod):''} ${w.type}`;
     
     // Attack Row (Stats)
@@ -536,13 +610,26 @@ function renderCombat(root){
   row.appendChild(s); row.appendChild(f); root.appendChild(death);
 }
 
+// MODIFIED: renderSpells now adds wondrous bonuses to DC and Spell Atk
 function renderSpells(root){
   const top = document.createElement('div'); top.className='card'; top.innerHTML='<h3>Spellcasting</h3>'; root.appendChild(top);
   const g=document.createElement('div'); g.className='grid cols-4'; top.appendChild(g);
   g.appendChild(select('Caster Type', state.spellcasting.casterType, ['none','full','half','pact'], v=>{ state.spellcasting.casterType=v; state.spellcasting.slots = slotsForLevel(v, state.info.level); save(); render(); }));
   g.appendChild(select('Spell Ability', state.spellcasting.ability, ['int','wis','cha'], v=>{ state.spellcasting.ability=v; save(); render(); }));
-  const dc = 8 + profBonus() + mod(totalAbility(state.spellcasting.ability));
-  const atk = profBonus() + mod(totalAbility(state.spellcasting.ability));
+  
+  // NEW: Get Wondrous bonus for spells
+  let wondrousDCBonus = 0;
+  let wondrousAtkBonus = 0; 
+  const activeItems = getActiveWondrousItems(); // Helper function
+  activeItems.forEach(item => {
+    wondrousDCBonus += Number(item.saveDCBonus || 0);
+    wondrousAtkBonus += Number(item.atkBonus || 0); // Assumes 'atkBonus' applies to spell attacks
+  });
+
+  const spellAbilityMod = mod(totalAbility(state.spellcasting.ability));
+  const dc = 8 + profBonus() + spellAbilityMod + wondrousDCBonus; // ADDED BONUS
+  const atk = profBonus() + spellAbilityMod + wondrousAtkBonus; // ADDED BONUS
+  
   top.appendChild(kpi('Save DC', dc));
   top.appendChild(kpi('Spell Atk', displayMod(atk)));
 
@@ -580,9 +667,9 @@ function renderInventory(root){
   const card=document.createElement('div'); card.className='card'; card.innerHTML='<h3>Inventory & Equipment</h3>'; root.appendChild(card);
   const g=document.createElement('div'); g.className='grid cols-3'; card.appendChild(g);
   const armorList=['None','Leather (Light)','Studded (Light)','Hide (Medium)','Chain Shirt (Medium)','Scale (Medium)','Breastplate (Medium)','Half Plate (Medium)','Chain Mail (Heavy)','Splint (Heavy)','Plate (Heavy)'];
-  g.appendChild(select('Armor', state.inventory.armor, armorList, v=>{ state.inventory.armor=v; calcAC(); save(); render(); }));
+  g.appendChild(select('Armor', state.inventory.armor, armorList, v=>{ state.inventory.armor=v; recalcBasics(); save(); render(); }));
   const sh = document.createElement('div'); sh.innerHTML = `<label>Shield</label><input type="checkbox" ${state.inventory.shield?'checked':''}>`;
-  sh.querySelector('input').onchange=e=>{ state.inventory.shield=e.target.checked; calcAC(); save(); render(); };
+  sh.querySelector('input').onchange=e=>{ state.inventory.shield=e.target.checked; recalcBasics(); save(); render(); };
   g.appendChild(sh);
   const coins = document.createElement('div'); coins.className='grid cols-4'; coins.innerHTML='<div><label>CP</label><input type="number"></div><div><label>SP</label><input type="number"></div><div><label>GP</label><input type="number"></div><div><label>PP</label><input type="number"></div>';
   const [cp,sp,gp,pp] = coins.querySelectorAll('input'); cp.value=state.inventory.coins.cp; sp.value=state.inventory.coins.sp; gp.value=state.inventory.coins.gp; pp.value=state.inventory.coins.pp;
@@ -821,7 +908,8 @@ function renderInventory(root){
 
 
   // Table of current items
-  const table=document.createElement('table'); table.innerHTML='<thead><tr><th>Name</th><th>Type</th><th>Weight</th><th>Attune Req</th><th>Equip</th><th></th></tr></thead><tbody></tbody>';
+  // FIX: Added "Attuned" header (now 7 columns)
+  const table=document.createElement('table'); table.innerHTML='<thead><tr><th>Name</th><th>Type</th><th>Weight</th><th>Attune Req</th><th>Attuned</th><th>Equip</th><th></th></tr></thead><tbody></tbody>';
   const tb=table.querySelector('tbody');
   state.inventory.items.forEach(i=>{
     const tr=document.createElement('tr'); 
@@ -835,12 +923,13 @@ function renderInventory(root){
       }
       
       i.equipped = e.target.checked;
-      recalcBasics(); // Recalculate basics (including speed)
+      recalcBasics(); // Recalculate basics (including speed, AC, HP, etc.)
       save(); 
       syncHeader(); // FIX: Call syncHeader immediately after save for instant header update
       render(); // Re-render to update the Combat tab's attack list
     };
 
+    // FIX: Corrected the order and number of table cells (<td>) to match the new 7-column header
     tr.innerHTML=`
       <td>${i.name}</td>
       <td>${i.type||'Gear'}</td>
@@ -856,8 +945,9 @@ function renderInventory(root){
     if(attuneCheck) {
         attuneCheck.onchange = (e) => { 
             i.attuned = e.target.checked; 
+            recalcBasics(); // Recalculate stats in case attunement changes them
             save(); 
-            render(); // Re-render to update Equip checkbox disabled state
+            render(); // Re-render to update Equip checkbox disabled state and stats
         };
     }
     // Listener for Equip checkbox
@@ -866,6 +956,7 @@ function renderInventory(root){
     // Delete handler for inventory items
     tr.querySelector('button').onclick=()=>{ 
       state.inventory.items=state.inventory.items.filter(x=>x.id!==i.id); 
+      recalcBasics(); // Recalculate stats in case an equipped item was removed
       save(); 
       render(); 
     };
@@ -875,7 +966,7 @@ function renderInventory(root){
     if(i.wepNotes){
       const notesTr = document.createElement('tr');
       notesTr.className = 'inventory-notes';
-      notesTr.innerHTML = `<td colspan="6">${i.wepNotes}</td>`; // colspan is 6 now
+      notesTr.innerHTML = `<td colspan="7">${i.wepNotes}</td>`; // FIX: colspan is 7 now
       tb.appendChild(notesTr);
     }
   }); 
