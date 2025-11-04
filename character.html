@@ -140,6 +140,7 @@ const THEME_KEY = 'cs_theme_v1'; // NEW: Key for theme
 let state = load();
 let routeId = 'builder';
 
+// MODIFIED: Removed redundant state properties
 function defState(){
   return {
     info:{ name:'New Hero', class:'Fighter', level:1, subclass:'', race:'Human', background:'', alignment:'Neutral', xp:0 },
@@ -147,13 +148,10 @@ function defState(){
     saves:{ str:false, dex:false, con:false, int:false, wis:false, cha:false },
     skills:{ acrobatics:false, animal:false, arcana:false, athletics:true, deception:false, history:false, insight:false, intimidation:true, investigation:false, medicine:false, nature:false, perception:false, performance:false, persuasion:false, religion:false, sleight:false, stealth:false, survival:false },
     combat:{ ac:10, hpMax:12, hp:12, temp:0, hitDie:'d10', hitDice:1, initiative:2, speed:30, death:{success:0, fail:0} },
-    attacks:[],
     inventory:{ coins:{cp:0,sp:0,gp:15,pp:0}, 
-      items:[], // Item structure: {id, name, weight, type, equipped, ...typeSpecificData}
-      carry:[] 
+      items:[] // Item structure: {id, name, weight, type, equipped, ...typeSpecificData}
     },
-    features:[],
-    spellcasting:{ casterType:'none', ability:'int', dc:10, atk:2, slots:{1:2}, known:[], prepared:[], notes:'' },
+    spellcasting:{ casterType:'none', ability:'int', dc:10, atk:2, slots:{1:2}, known:[], notes:'' },
     notes:[],
     log:[]
   }
@@ -526,9 +524,7 @@ function renderCombat(root){
   root.appendChild(hpCard);
 
   const atk = document.createElement('div'); atk.className='card'; atk.innerHTML = '<h3>Attacks</h3>';
-  
-  // FIX: Removed native custom weapon input fields from the Combat menu.
-  
+    
   const table=document.createElement('table'); table.innerHTML='<thead><tr><th>Name</th><th>Attack</th><th>Damage</th><th></th></tr></thead><tbody></tbody>';
   const tb = table.querySelector('tbody');
   
@@ -541,7 +537,7 @@ function renderCombat(root){
     wondrousDmgBonus += Number(item.dmgBonus || 0);
   });
   
-  // Custom Attacks List will now only pull from Inventory (weapons)
+  // MODIFIED: Custom Attacks List now only pulls from Inventory
   const inventoryWeapons = state.inventory.items.filter(i => i.equipped && (i.type === 'Weapon' || i.type === 'Magic Weapon'))
     .map(i => ({
       id: i.id,
@@ -554,9 +550,8 @@ function renderCombat(root){
       notes: i.wepNotes 
     }));
 
+  // MODIFIED: Removed 'state.attacks' from this list
   const attacksList = [
-      // state.attacks will be empty unless manually added by other features/imports.
-      ...state.attacks,
       ...inventoryWeapons
   ];
 
@@ -592,17 +587,10 @@ function renderCombat(root){
       log(`${state.info.name} attacks with ${w.name}: to hit ${r1.total}${displayMod(att)} = ${toHit}; damage ${w.dice}${dmgMod? displayMod(dmgMod):''} → ${dmg}`);
     };
     
-    // Delete handler (removes only native attacks)
-    if(state.attacks.find(a=>a.id===w.id)){
-      tr.querySelector('[data-del]').onclick=()=>{ 
-        state.attacks = state.attacks.filter(a=>a.id!==w.id); 
-        save(); render(); 
-      };
-    } else {
-      // For inventory weapons, delete button is removed since they are managed in Inventory
-      const deleteBtn = tr.querySelector('[data-del]');
-      if(deleteBtn) deleteBtn.remove();
-    }
+    // MODIFIED: Simplified delete logic
+    // For inventory weapons, delete button is removed since they are managed in Inventory
+    const deleteBtn = tr.querySelector('[data-del]');
+    if(deleteBtn) deleteBtn.remove();
     
     tb.appendChild(tr);
 
