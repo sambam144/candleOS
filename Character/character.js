@@ -1,0 +1,1847 @@
+// ---------- State ----------
+const STORAGE_KEY = "cs_v1";
+const THEME_KEY = "cs_theme_v1"; // NEW: Key for theme
+let state = load();
+let routeId = "builder";
+
+// MODIFIED: Removed redundant state properties
+function defState() {
+  return {
+    info: {
+      name: "New Hero",
+      class: "Fighter",
+      level: 1,
+      subclass: "",
+      race: "Human",
+      background: "",
+      alignment: "Neutral",
+      xp: 0,
+    },
+    abilities: { str: 15, dex: 14, con: 13, int: 12, wis: 10, cha: 8 },
+    saves: {
+      str: false,
+      dex: false,
+      con: false,
+      int: false,
+      wis: false,
+      cha: false,
+    },
+    skills: {
+      acrobatics: false,
+      animal: false,
+      arcana: false,
+      athletics: true,
+      deception: false,
+      history: false,
+      insight: false,
+      intimidation: true,
+      investigation: false,
+      medicine: false,
+      nature: false,
+      perception: false,
+      performance: false,
+      persuasion: false,
+      religion: false,
+      sleight: false,
+      stealth: false,
+      survival: false,
+    },
+    combat: {
+      ac: 10,
+      hpMax: 12,
+      hp: 12,
+      temp: 0,
+      hitDie: "d10",
+      hitDice: 1,
+      initiative: 2,
+      speed: 30,
+      death: { success: 0, fail: 0 },
+    },
+    inventory: {
+      coins: { cp: 0, sp: 0, gp: 15, pp: 0 },
+      items: [], // Item structure: {id, name, weight, type, equipped, ...typeSpecificData}
+    },
+    spellcasting: {
+      casterType: "none",
+      ability: "int",
+      dc: 10,
+      atk: 2,
+      slots: { 1: 2 },
+      known: [],
+      notes: "",
+    },
+    notes: [],
+    log: [],
+  };
+}
+
+function save() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  syncHeader();
+}
+function load() {
+  const raw = localStorage.getItem(STORAGE_KEY);
+  return raw ? JSON.parse(raw) : defState();
+}
+function reset() {
+  if (confirm("This wipes your sheet.")) {
+    state = defState();
+    save();
+    render();
+    toast("Sheet reset");
+  }
+}
+
+// ---------- UI Chrome ----------
+const NAV = [
+  ["builder", "Builder", "🧩"],
+  ["sheet", "Sheet", "📜"],
+  ["combat", "Combat", "⚔️"],
+  ["spells", "Spells", "✨"],
+  ["inventory", "Inventory", "🎒"],
+  ["notes", "Notes", "📝"],
+  ["dice", "Dice", "🎲"],
+  ["about", "About", "❓"],
+];
+
+function buildNav() {
+  const el = document.getElementById("nav");
+  el.innerHTML = "";
+  NAV.forEach(([id, label, icon]) => {
+    const b = document.createElement("button");
+    b.innerHTML = `<span>${icon}</span><span>${label}</span>`;
+    if (routeId === id) b.classList.add("active");
+    b.onclick = () => {
+      routeId = id;
+      render();
+    };
+    el.appendChild(b);
+  });
+}
+
+function syncHeader() {
+  const lvl = state.info.level;
+  document.getElementById("kLevel").textContent = lvl;
+  document.getElementById("kProf").textContent = displayMod(profBonus());
+  document.getElementById("kAC").textContent = calcAC(); // Recalculates AC including wondrous items
+  document.getElementById(
+    "kHP"
+  ).textContent = `${state.combat.hp}/${state.combat.hpMax}`;
+  document.getElementById("kSpeed").textContent = state.combat.speed; // This is set by recalcBasics
+}
+
+function toast(msg) {
+  const t = document.createElement("div");
+  t.className = "toast";
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 2000);
+}
+
+// ---------- Rules helpers ----------
+function mod(score) {
+  return Math.floor((Number(score || 10) - 10) / 2);
+}
+function displayMod(n) {
+  return n >= 0 ? `+${n}` : `${n}`;
+}
+function profBonus() {
+  const L = Number(state.info.level || 1);
+  return 2 + Math.floor((L - 1) / 4);
+}
+function setAbility(which, val) {
+  state.abilities[which] = Number(val || 10);
+  save();
+  render();
+}
+
+// MODIFIED: calcAC now calculates based on equipped items, not legacy state
+function calcAC() {
+  const dex = mod(totalAbility("dex")); // totalAbility now includes wondrous buffs
+  let base = 10 + dex; // Unarmored base
+
+  // 1. Check for equipped Armor
+  const equippedArmor = state.inventory.items.find(
+    (i) => i.equipped && (i.type === "Armor" || i.type === "Magic Armor")
+  );
+
+  if (equippedArmor) {
+    const ac = Number(equippedArmor.armorAC || 10);
+    const cap = equippedArmor.armorDexCap; // 'None', '2', '0', etc.
+    const bonus = Number(equippedArmor.armorBonus || 0);
+
+    let dexUse = dex;
+    if (cap !== "None" && cap !== null && cap !== undefined) {
+      dexUse = Math.min(dex, Number(cap));
+    }
+
+    base = ac + dexUse + bonus;
+  }
+
+  // 2. Check for equipped Shield
+  const equippedShield = state.inventory.items.find(
+    (i) => i.equipped && i.type === "Shield"
+  );
+  if (equippedShield) {
+    base += 2;
+  }
+
+  // 3. Apply Wondrous Item AC Bonus (e.g., Ring of Protection, Cloak of Protection)
+  const activeItems = getActiveWondrousItems();
+  activeItems.forEach((item) => {
+    base += Number(item.acBonus || 0);
+  });
+
+  state.combat.ac = base;
+  return base;
+}
+
+function saveThrow(ability) {
+  const trained = state.saves[ability];
+  return mod(totalAbility(ability)) + (trained ? profBonus() : 0);
+}
+const SKILL_MAP = {
+  acrobatics: ["dex"],
+  animal: ["wis"],
+  arcana: ["int"],
+  athletics: ["str"],
+  deception: ["cha"],
+  history: ["int"],
+  insight: ["wis"],
+  intimidation: ["cha"],
+  investigation: ["int"],
+  medicine: ["wis"],
+  nature: ["int"],
+  perception: ["wis"],
+  performance: ["cha"],
+  persuasion: ["cha"],
+  religion: ["int"],
+  sleight: ["dex"],
+  stealth: ["dex"],
+  survival: ["wis"],
+};
+function skillBonus(key) {
+  const [ability] = SKILL_MAP[key];
+  const trained = state.skills[key];
+  return mod(totalAbility(ability)) + (trained ? profBonus() : 0);
+}
+
+// NEW: Helper function to get active (equipped and attuned) wondrous items
+function getActiveWondrousItems() {
+  return state.inventory.items.filter(
+    (i) =>
+      i.type === "Wondrous Item" &&
+      i.equipped &&
+      (i.attunementRequired === "No" ||
+        (i.attunementRequired === "Yes" && i.attuned))
+  );
+}
+
+function hitDieForClass(cls) {
+  const m = {
+    Barbarian: "d12",
+    Fighter: "d10",
+    Paladin: "d10",
+    Ranger: "d10",
+    Bard: "d8",
+    Cleric: "d8",
+    Druid: "d8",
+    Monk: "d8",
+    Rogue: "d8",
+    Warlock: "d8",
+    Wizard: "d6",
+    Sorcerer: "d6",
+    Artificer: "d8",
+  };
+  return m[cls] || "d8";
+}
+function casterTypeForClass(cls) {
+  const full = ["Wizard", "Cleric", "Druid", "Sorcerer", "Bard"];
+  const half = ["Paladin", "Ranger", "Artificer"];
+  const pact = ["Warlock"];
+  if (full.includes(cls)) return "full";
+  if (half.includes(cls)) return "half";
+  if (pact.includes(cls)) return "pact";
+  return "none";
+}
+function spellAbilityForClass(cls) {
+  const map = {
+    Wizard: "int",
+    Artificer: "int",
+    Cleric: "wis",
+    Druid: "wis",
+    Ranger: "wis",
+    Bard: "cha",
+    Paladin: "cha",
+    Sorcerer: "cha",
+    Warlock: "cha",
+  };
+  return map[cls] || "int";
+}
+function slotsForLevel(type, level) {
+  // Simple slot tables packed enough for play. Full caster baseline. Half uses level/2. Pact uses short list.
+  const L = type === "half" ? Math.ceil(level / 2) : level;
+  if (type === "pact") {
+    const pact = {
+      1: [1, 0, 0, 0, 0, 0, 0, 0, 0],
+      2: [2, 0, 0, 0, 0, 0, 0, 0, 0],
+      3: [2, 0, 0, 0, 0, 0, 0, 0, 0],
+      4: [2, 0, 0, 0, 0, 0, 0, 0, 0],
+      5: [2, 0, 0, 0, 0, 0, 0, 0, 0],
+      6: [2, 0, 0, 0, 0, 0, 0, 0, 0],
+      7: [2, 0, 0, 0, 0, 0, 0, 0, 0],
+      8: [2, 0, 0, 0, 0, 0, 0, 0, 0],
+      9: [2, 0, 0, 0, 0, 0, 0, 0, 0],
+      10: [2, 0, 0, 0, 0, 0, 0, 0, 0],
+    };
+    const arr = pact[Math.min(10, Math.max(1, level))];
+    const out = {};
+    arr.forEach((n, i) => {
+      if (n) out[i + 1] = n;
+    });
+    return out;
+  }
+  const table = {
+    1: { 1: 2 },
+    2: { 1: 3 },
+    3: { 1: 4, 2: 2 },
+    4: { 1: 4, 2: 3 },
+    5: { 1: 4, 2: 3, 3: 2 },
+    6: { 1: 4, 2: 3, 3: 3 },
+    7: { 1: 4, 2: 3, 3: 3, 4: 1 },
+    8: { 1: 4, 2: 3, 3: 3, 4: 2 },
+    9: { 1: 4, 2: 3, 3: 3, 4: 3, 5: 1 },
+    10: { 1: 4, 2: 3, 3: 3, 4: 3, 5: 2 },
+    11: { 1: 4, 2: 3, 3: 3, 4: 3, 5: 2, 6: 1 },
+    12: { 1: 4, 2: 3, 3: 3, 4: 3, 5: 2, 6: 1 },
+    13: { 1: 4, 2: 3, 3: 3, 4: 3, 5: 2, 6: 1, 7: 1 },
+    14: { 1: 4, 2: 3, 3: 3, 4: 3, 5: 2, 6: 1, 7: 1 },
+    15: { 1: 4, 2: 3, 3: 3, 4: 3, 5: 2, 6: 1, 7: 1, 8: 1 },
+    16: { 1: 4, 2: 3, 3: 3, 4: 3, 5: 2, 6: 1, 7: 1, 8: 1 },
+    17: { 1: 4, 2: 3, 3: 3, 4: 3, 5: 2, 6: 1, 7: 1, 8: 1, 9: 1 },
+    18: { 1: 4, 2: 3, 3: 3, 4: 3, 5: 3, 6: 1, 7: 1, 8: 1, 9: 1 },
+    19: { 1: 4, 2: 3, 3: 3, 4: 3, 5: 3, 6: 2, 7: 1, 8: 1, 9: 1 },
+    20: { 1: 4, 2: 3, 3: 3, 4: 3, 5: 3, 6: 2, 7: 2, 8: 1, 9: 1 },
+  };
+  const ent = table[Math.min(20, Math.max(1, L))];
+  return { ...ent };
+}
+
+function applyRace(r) {
+  // Small pack of races with ASIs and speed
+  const R = {
+    Human: {
+      asi: { str: 1, dex: 1, con: 1, int: 1, wis: 1, cha: 1 },
+      speed: 30,
+    },
+    Elf: { asi: { dex: 2 }, speed: 30 },
+    Dwarf: { asi: { con: 2 }, speed: 25 },
+    Halfling: { asi: { dex: 2 }, speed: 25 },
+    Gnome: { asi: { int: 2 }, speed: 25 },
+    HalfOrc: { asi: { str: 2, con: 1 }, speed: 30 },
+    Tiefling: { asi: { cha: 2, int: 1 }, speed: 30 },
+    Dragonborn: { asi: { str: 2, cha: 1 }, speed: 30 },
+  };
+  return R[r] || R.Human;
+}
+
+// MODIFIED: totalAbility now includes bonuses and set scores from Wondrous Items
+function totalAbility(ability) {
+  const base = Number(state.abilities[ability] || 10);
+  const asi = applyRace(state.info.race).asi[ability] || 0;
+
+  // NEW: Wondrous Item Buffs
+  let wondrousBonus = 0;
+  let wondrousSetScore = 0;
+  const activeItems = getActiveWondrousItems();
+
+  activeItems.forEach((item) => {
+    // 1. Handle Bonuses (e.g., "str+2, con+1")
+    if (item.abiBonus) {
+      const bonuses = item.abiBonus.split(",");
+      bonuses.forEach((b) => {
+        const [key, val] = b.trim().split("+");
+        if (key === ability && val) {
+          wondrousBonus += Number(val.trim() || 0);
+        }
+      });
+    }
+
+    // 2. Handle Set Scores (e.g., "con=19")
+    if (item.setAbility) {
+      const sets = item.setAbility.split(",");
+      sets.forEach((s) => {
+        const [key, val] = s.trim().split("=");
+        if (key === ability && val) {
+          wondrousSetScore = Math.max(
+            wondrousSetScore,
+            Number(val.trim() || 0)
+          );
+        }
+      });
+    }
+  });
+
+  const totalBase = base + asi + wondrousBonus;
+  return Math.max(totalBase, wondrousSetScore);
+}
+
+function recalcFromClass() {
+  const cls = state.info.class;
+  state.combat.hitDie = hitDieForClass(cls);
+  state.spellcasting.casterType = casterTypeForClass(cls);
+  state.spellcasting.ability = spellAbilityForClass(cls);
+  state.spellcasting.slots = slotsForLevel(
+    state.spellcasting.casterType,
+    state.info.level
+  );
+  // Saving throws by class
+  const strong = {
+    Barbarian: ["str", "con"],
+    Bard: ["dex", "cha"],
+    Cleric: ["wis", "cha"],
+    Druid: ["int", "wis"],
+    Fighter: ["str", "con"],
+    Monk: ["str", "dex"],
+    Paladin: ["wis", "cha"],
+    Ranger: ["str", "dex"],
+    Rogue: ["dex", "int"],
+    Sorcerer: ["con", "cha"],
+    Warlock: ["wis", "cha"],
+    Wizard: ["int", "wis"],
+    Artificer: ["con", "int"],
+  };
+  const keys = ["str", "dex", "con", "int", "wis", "cha"];
+  keys.forEach(
+    (k) => (state.saves[k] = strong[cls]?.includes(k) || false)
+  );
+}
+
+// MODIFIED: recalcBasics now adds wondrous speed bonus and relies on new totalAbility/calcAC
+function recalcBasics() {
+  // Get active wondrous items
+  const activeItems = getActiveWondrousItems();
+
+  // Base Speed from race
+  let speed = applyRace(state.info.race).speed;
+
+  // NEW: Apply Wondrous Item Speed Bonus
+  activeItems.forEach((item) => {
+    speed += Number(item.speedBonus || 0);
+  });
+
+  // Apply Speed Penalty from Armor
+  const strScore = totalAbility("str"); // This now includes wondrous buffs
+  const equippedArmor = state.inventory.items.filter(
+    (i) => i.equipped && (i.type === "Armor" || i.type === "Magic Armor")
+  );
+
+  equippedArmor.forEach((armor) => {
+    const strReq = armor.armorStrReq || 0;
+    // Check if Heavy Armor (STR Req >= 13 is a proxy for heavy armor rules)
+    if (strReq >= 13 && strScore < strReq) {
+      speed -= 10;
+    }
+  });
+
+  state.combat.speed = Math.max(0, speed);
+
+  // Initiative = Dex mod (will pull from new totalAbility)
+  state.combat.initiative = mod(totalAbility("dex"));
+
+  // HP baseline if first time
+  const die = state.combat.hitDie || "d10";
+  const dieMax = Number(die.replace("d", ""));
+  const lvl = state.info.level;
+  // Max HP (will pull from new totalAbility('con'))
+  const conm = mod(totalAbility("con"));
+  const base = dieMax + (lvl - 1) * (Math.ceil(dieMax / 2) + conm);
+  state.combat.hpMax = Math.max(1, base);
+  if (state.combat.hp > state.combat.hpMax)
+    state.combat.hp = state.combat.hpMax;
+
+  calcAC(); // This will pull from new calcAC (which pulls from new totalAbility)
+}
+
+// ---------- Views ----------
+function render() {
+  buildNav();
+  const v = document.getElementById("view");
+  v.innerHTML = "";
+  const map = {
+    builder: renderBuilder,
+    sheet: renderSheet,
+    combat: renderCombat,
+    spells: renderSpells,
+    inventory: renderInventory,
+    notes: renderNotes,
+    dice: renderDice,
+    about: renderAbout,
+  };
+  map[routeId]?.(v);
+  syncHeader();
+}
+
+function input(label, value, on) {
+  const wrap = document.createElement("div");
+  wrap.innerHTML = `<label>${label}</label>`;
+  const i = document.createElement("input");
+  i.value = value;
+  i.onchange = () => on(i.value);
+  i.type = "text";
+  wrap.appendChild(i);
+  return wrap;
+}
+function num(label, value, on) {
+  const w = document.createElement("div");
+  w.innerHTML = `<label>${label}</label>`;
+  const i = document.createElement("input");
+  i.type = "number";
+  i.value = value;
+  i.onchange = () => on(Number(i.value));
+  w.appendChild(i);
+  return w;
+}
+function select(label, value, options, on) {
+  const w = document.createElement("div");
+  w.innerHTML = `<label>${label}</label>`;
+  const s = document.createElement("select");
+  options.forEach((o) => {
+    const opt = document.createElement("option");
+    opt.value = o;
+    opt.textContent = o;
+    s.appendChild(opt);
+  });
+  s.value = value;
+  s.onchange = () => on(s.value);
+  w.appendChild(s);
+  return w;
+}
+
+function renderBuilder(root) {
+  const card = document.createElement("div");
+  card.className = "card";
+  card.innerHTML = `<h3>Character Builder</h3>`;
+  root.appendChild(card);
+  const grid = document.createElement("div");
+  grid.className = "grid cols-3";
+  card.appendChild(grid);
+
+  grid.appendChild(
+    input("Name", state.info.name, (v) => {
+      state.info.name = v;
+      save();
+    })
+  );
+  grid.appendChild(
+    select(
+      "Class",
+      state.info.class,
+      [
+        "Barbarian",
+        "Bard",
+        "Cleric",
+        "Druid",
+        "Fighter",
+        "Monk",
+        "Paladin",
+        "Ranger",
+        "Rogue",
+        "Sorcerer",
+        "Warlock",
+        "Wizard",
+        "Artificer",
+      ],
+      (v) => {
+        state.info.class = v;
+        recalcFromClass();
+        recalcBasics();
+        save();
+        render();
+      }
+    )
+  );
+  grid.appendChild(
+    num("Level", state.info.level, (v) => {
+      state.info.level = Math.max(1, Math.min(20, v));
+      recalcFromClass();
+      recalcBasics();
+      save();
+      render();
+    })
+  );
+  grid.appendChild(
+    select(
+      "Race",
+      state.info.race,
+      [
+        "Human",
+        "Elf",
+        "Dwarf",
+        "Halfling",
+        "Gnome",
+        "HalfOrc",
+        "Tiefling",
+        "Dragonborn",
+      ],
+      (v) => {
+        state.info.race = v;
+        recalcBasics();
+        save();
+        render();
+      }
+    )
+  );
+  grid.appendChild(
+    input("Background", state.info.background, (v) => {
+      state.info.background = v;
+      save();
+    })
+  );
+  grid.appendChild(
+    select(
+      "Alignment",
+      state.info.alignment,
+      ["LG", "NG", "CG", "LN", "N", "CN", "LE", "NE", "CE"],
+      (v) => {
+        state.info.alignment = v;
+        save();
+      }
+    )
+  );
+
+  const ab = document.createElement("div");
+  ab.className = "card";
+  ab.innerHTML = `<h3>Abilities</h3>`;
+  root.appendChild(ab);
+  const abg = document.createElement("div");
+  abg.className = "grid cols-6";
+  ab.appendChild(abg);
+
+  // FIX: Modified loop to structure label/bubble/input correctly for vertical alignment in the second grid column
+  ["str", "dex", "con", "int", "wis", "cha"].forEach((k) => {
+    const wrap = document.createElement("div");
+    wrap.className = "ability";
+
+    // Label for column 1
+    const label = document.createElement("label");
+    label.style.textTransform = "uppercase";
+    label.textContent = k;
+    wrap.appendChild(label);
+
+    // Container for bubble and input for column 2 (to stack them vertically)
+    const controlGroup = document.createElement("div");
+    controlGroup.style.display = "grid"; // Stacks them
+    controlGroup.style.gap = "4px"; // Tighter gap for stacking
+
+    const box = document.createElement("div");
+    box.className = "bubble";
+    box.innerHTML = `<div>
+      <div style="font-size:18px;text-align:center">${totalAbility(k)}</div>
+      <div class="note" style="text-align:center">${displayMod(
+        mod(totalAbility(k))
+      )}</div>
+    </div>`;
+    controlGroup.appendChild(box);
+
+    const control = document.createElement("input");
+    control.type = "number";
+    control.value = state.abilities[k];
+    control.onchange = () => {
+      setAbility(k, control.value);
+    };
+    controlGroup.appendChild(control);
+
+    wrap.appendChild(controlGroup);
+    abg.appendChild(wrap);
+  });
+  // END FIX
+
+  const saveCard = document.createElement("div");
+  saveCard.className = "card";
+  saveCard.innerHTML = "<h3>Saving Throws & Skills</h3>";
+  root.appendChild(saveCard);
+  const sg = document.createElement("div");
+  sg.className = "grid cols-2";
+  saveCard.appendChild(sg); // This is the grid container
+
+  // Saves
+  const sv = document.createElement("div");
+  sv.innerHTML = "<b>Saves</b>";
+  sg.appendChild(sv); // Append header to grid
+
+  const st = document.createElement("table");
+  st.innerHTML =
+    "<thead><tr><th>Ability</th><th>Prof</th><th>Bonus</th></tr></thead><tbody></tbody>";
+  const stb = st.querySelector("tbody");
+  ["str", "dex", "con", "int", "wis", "cha"].forEach((k) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td style="text-transform:uppercase">${k}</td><td><input type="checkbox" ${
+      state.saves[k] ? "checked" : ""
+    }></td><td>${displayMod(saveThrow(k))}</td>`;
+    tr.querySelector("input").onchange = (e) => {
+      state.saves[k] = e.target.checked;
+      save();
+      render();
+    };
+    stb.appendChild(tr);
+  });
+  sg.appendChild(st); // FIX: Append save table to grid container 'sg'
+
+  // Add a placeholder div for header alignment on the right
+  const skHeader = document.createElement("div");
+  skHeader.innerHTML = "<b>Skills</b>";
+  sg.appendChild(skHeader);
+
+  // Skills
+  const sk = document.createElement("table");
+  sk.innerHTML =
+    "<thead><tr><th>Skill</th><th>Prof</th><th>Bonus</th></tr></thead><tbody></tbody>";
+  const skb = sk.querySelector("tbody");
+  Object.keys(SKILL_MAP).forEach((k) => {
+    const label = k.charAt(0).toUpperCase() + k.slice(1);
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${label}</td><td><input type="checkbox" ${
+      state.skills[k] ? "checked" : ""
+    }></td><td>${displayMod(skillBonus(k))}</td>`;
+    tr.querySelector("input").onchange = (e) => {
+      state.skills[k] = e.target.checked;
+      save();
+      render();
+    };
+    skb.appendChild(tr);
+  });
+  sg.appendChild(sk); // FIX: Append skill table to grid container 'sg'
+}
+
+function renderSheet(root) {
+  const card = document.createElement("div");
+  card.className = "card";
+  card.innerHTML = `<h3>Sheet</h3>`;
+  root.appendChild(card);
+  const grid = document.createElement("div");
+  grid.className = "grid cols-3";
+  card.appendChild(grid);
+  grid.appendChild(readout("Name", state.info.name));
+  grid.appendChild(readout("Class", state.info.class));
+  grid.appendChild(readout("Level", state.info.level));
+  grid.appendChild(readout("Race", state.info.race));
+  grid.appendChild(readout("Background", state.info.background || "—"));
+  grid.appendChild(readout("Alignment", state.info.alignment));
+
+  const ab = document.createElement("div");
+  ab.className = "grid cols-6";
+  root.appendChild(ab);
+  ["str", "dex", "con", "int", "wis", "cha"].forEach((k) => {
+    const c = document.createElement("div");
+    c.className = "card";
+    c.innerHTML = `<b style="text-transform:uppercase">${k}</b><div style="font-size:28px">${totalAbility(
+      k
+    )}</div><div class="note">${displayMod(mod(totalAbility(k)))}</div>`;
+    ab.appendChild(c);
+  });
+
+  const passives = document.createElement("div");
+  passives.className = "grid cols-3";
+  root.appendChild(passives);
+  passives.appendChild(kpi("Proficiency", displayMod(profBonus())));
+  passives.appendChild(
+    kpi("Passive Perception", 10 + skillBonus("perception"))
+  );
+  passives.appendChild(kpi("Initiative", displayMod(state.combat.initiative)));
+}
+
+// MODIFIED: renderCombat now adds global atk/dmg bonuses from wondrous items
+function renderCombat(root) {
+  const top = document.createElement("div");
+  top.className = "grid cols-3";
+  root.appendChild(top);
+  top.appendChild(
+    numWrap(
+      "AC",
+      state.combat.ac,
+      (v) => {
+        state.combat.ac = Number(v);
+        save();
+        render();
+      },
+      true,
+      calcAC()
+    )
+  );
+  top.appendChild(
+    numWrap("Speed", state.combat.speed, (v) => {
+      state.combat.speed = Number(v);
+      save();
+      render();
+    })
+  );
+  const hpCard = document.createElement("div");
+  hpCard.className = "card";
+  hpCard.innerHTML = "<h3>Hit Points</h3>";
+  const hpg = document.createElement("div");
+  hpg.className = "grid cols-3";
+  hpCard.appendChild(hpg);
+  const mk = wrapNum("Max", state.combat.hpMax, (v) => {
+    state.combat.hpMax = Number(v);
+    if (state.combat.hp > state.combat.hpMax)
+      state.combat.hp = state.combat.hpMax;
+    save();
+    render();
+  });
+  const cur = wrapNum("Current", state.combat.hp, (v) => {
+    state.combat.hp = Math.max(0, Number(v));
+    save();
+    syncHeader();
+  });
+  const tmp = wrapNum("Temp", state.combat.temp, (v) => {
+    state.combat.temp = Number(v);
+    save();
+  });
+  hpg.appendChild(mk);
+  hpg.appendChild(cur);
+  hpg.appendChild(tmp);
+  const die = wrapText(
+    "Hit Die",
+    state.combat.hitDie || hitDieForClass(state.info.class),
+    (v) => {
+      state.combat.hitDie = v;
+      save();
+    }
+  );
+  const dice = wrapNum("Hit Dice", state.info.level, (v) => {
+    state.combat.hitDice = Number(v);
+    save();
+  });
+  hpg.appendChild(die);
+  hpg.appendChild(dice);
+  root.appendChild(hpCard);
+
+  const atk = document.createElement("div");
+  atk.className = "card";
+  atk.innerHTML = "<h3>Attacks</h3>";
+
+  const table = document.createElement("table");
+  table.innerHTML =
+    "<thead><tr><th>Name</th><th>Attack</th><th>Damage</th><th></th></tr></thead><tbody></tbody>";
+  const tb = table.querySelector("tbody");
+
+  // NEW: Get global bonuses from wondrous items
+  let wondrousAtkBonus = 0;
+  let wondrousDmgBonus = 0;
+  const activeItems = getActiveWondrousItems(); // Helper function
+  activeItems.forEach((item) => {
+    wondrousAtkBonus += Number(item.atkBonus || 0);
+    wondrousDmgBonus += Number(item.dmgBonus || 0);
+  });
+
+  // MODIFIED: Custom Attacks List now only pulls from Inventory
+  const inventoryWeapons = state.inventory.items
+    .filter(
+      (i) => i.equipped && (i.type === "Weapon" || i.type === "Magic Weapon")
+    )
+    .map((i) => ({
+      id: i.id,
+      name: i.name,
+      ability: i.wepAbility || "str",
+      proficient: i.wepProficient,
+      bonus: Number(i.wepBonus) || 0,
+      dice: i.wepDamageDice,
+      type: i.wepDamageType,
+      notes: i.wepNotes,
+    }));
+
+  // MODIFIED: Removed 'state.attacks' from this list
+  const attacksList = [...inventoryWeapons];
+
+  attacksList.forEach((w) => {
+    // Calculate attack and damage modifiers
+    const abilityScore = w.ability
+      ? totalAbility(w.ability)
+      : totalAbility("str");
+    const profBonusVal = w.proficient ? profBonus() : 0;
+
+    // MODIFIED: Added wondrousAtkBonus
+    const att =
+      mod(abilityScore) + profBonusVal + (w.bonus || 0) + wondrousAtkBonus;
+    // MODIFIED: Added wondrousDmgBonus
+    const dmgMod = mod(abilityScore) + (w.bonus || 0) + wondrousDmgBonus;
+    const damageText = `${w.dice}${
+      dmgMod ? (dmgMod > 0 ? `+${dmgMod}` : dmgMod) : ""
+    } ${w.type}`;
+
+    // Attack Row (Stats)
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${w.name}</td>
+      <td>${displayMod(att)}</td>
+      <td>${damageText}</td>
+      <td>
+        <button class="btn small" data-id="${w.id}">Roll</button> 
+        <button class="btn small danger" data-del="${w.id}">Delete</button>
+      </td>
+    `;
+
+    // Roll handler
+    tr.querySelector("[data-id]").onclick = () => {
+      const r1 = rollDice("1d20");
+      const toHit = r1.total + att;
+      const r2 = rollDice(w.dice);
+      const dmg = r2.total + dmgMod;
+      log(
+        `${state.info.name} attacks with ${w.name}: to hit ${
+          r1.total
+        }${displayMod(att)} = ${toHit}; damage ${w.dice}${
+          dmgMod ? displayMod(dmgMod) : ""
+        } → ${dmg}`
+      );
+    };
+
+    // MODIFIED: Simplified delete logic
+    // For inventory weapons, delete button is removed since they are managed in Inventory
+    const deleteBtn = tr.querySelector("[data-del]");
+    if (deleteBtn) deleteBtn.remove();
+
+    tb.appendChild(tr);
+
+    // Notes Row (if notes exist)
+    if (w.notes) {
+      const notesTr = document.createElement("tr");
+      notesTr.className = "attack-notes";
+      // Note: colspan 4 because the delete button is usually removed for inventory items
+      notesTr.innerHTML = `<td colspan="4">${w.notes}</td>`;
+      tb.appendChild(notesTr);
+    }
+  });
+  atk.appendChild(table);
+  root.appendChild(atk);
+
+  const death = document.createElement("div");
+  death.className = "card";
+  death.innerHTML = "<h3>Death Saves</h3>";
+  const row = document.createElement("div");
+  row.className = "row";
+  death.appendChild(row);
+  const d = state.combat.death;
+  const s = document.createElement("div");
+  s.innerHTML = `<label>Success</label><input type="number" min="0" max="3" value="${d.success}">`;
+  s.querySelector("input").onchange = (e) => {
+    d.success = Math.max(0, Math.min(3, Number(e.target.value)));
+    save();
+  };
+  const f = document.createElement("div");
+  f.innerHTML = `<label>Failures</label><input type="number" min="0" max="3" value="${d.fail}">`;
+  f.querySelector("input").onchange = (e) => {
+    d.fail = Math.max(0, Math.min(3, Number(e.target.value)));
+    save();
+  };
+  row.appendChild(s);
+  row.appendChild(f);
+  root.appendChild(death);
+}
+
+// MODIFIED: renderSpells now adds wondrous bonuses to DC and Spell Atk
+function renderSpells(root) {
+  const top = document.createElement("div");
+  top.className = "card";
+  top.innerHTML = "<h3>Spellcasting</h3>";
+  root.appendChild(top);
+  const g = document.createElement("div");
+  g.className = "grid cols-4";
+  top.appendChild(g);
+  g.appendChild(
+    select(
+      "Caster Type",
+      state.spellcasting.casterType,
+      ["none", "full", "half", "pact"],
+      (v) => {
+        state.spellcasting.casterType = v;
+        state.spellcasting.slots = slotsForLevel(v, state.info.level);
+        save();
+        render();
+      }
+    )
+  );
+  g.appendChild(
+    select(
+      "Spell Ability",
+      state.spellcasting.ability,
+      ["int", "wis", "cha"],
+      (v) => {
+        state.spellcasting.ability = v;
+        save();
+        render();
+      }
+    )
+  );
+
+  // NEW: Get Wondrous bonus for spells
+  let wondrousDCBonus = 0;
+  let wondrousAtkBonus = 0;
+  const activeItems = getActiveWondrousItems(); // Helper function
+  activeItems.forEach((item) => {
+    wondrousDCBonus += Number(item.saveDCBonus || 0);
+    wondrousAtkBonus += Number(item.atkBonus || 0); // Assumes 'atkBonus' applies to spell attacks
+  });
+
+  const spellAbilityMod = mod(totalAbility(state.spellcasting.ability));
+  const dc = 8 + profBonus() + spellAbilityMod + wondrousDCBonus; // ADDED BONUS
+  const atk = profBonus() + spellAbilityMod + wondrousAtkBonus; // ADDED BONUS
+
+  top.appendChild(kpi("Save DC", dc));
+  top.appendChild(kpi("Spell Atk", displayMod(atk)));
+
+  const slotsCard = document.createElement("div");
+  slotsCard.className = "card";
+  slotsCard.innerHTML = "<h3>Slots</h3>";
+  const tbl = document.createElement("table");
+  tbl.innerHTML =
+    "<thead><tr><th>Level</th><th>Slots</th></tr></thead><tbody></tbody>";
+  const body = tbl.querySelector("tbody");
+  Object.entries(state.spellcasting.slots || {}).forEach(([lvl, n]) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${lvl}</td><td><input type="number" min="0" value="${n}"></td>`;
+    tr.querySelector("input").onchange = (e) => {
+      state.spellcasting.slots[lvl] = Number(e.target.value);
+      save();
+    };
+    body.appendChild(tr);
+  });
+  slotsCard.appendChild(tbl);
+  root.appendChild(slotsCard);
+
+  const book = document.createElement("div");
+  book.className = "card";
+  book.innerHTML = "<h3>Spellbook</h3>";
+  const add = document.createElement("div");
+  add.className = "row";
+  const name = document.createElement("input");
+  name.placeholder = "Spell name";
+  const level = document.createElement("input");
+  level.type = "number";
+  level.placeholder = "Level";
+  level.value = 1;
+  const prep = document.createElement("input");
+  prep.type = "checkbox";
+  const addBtn = document.createElement("button");
+  addBtn.className = "btn primary";
+  addBtn.textContent = "Add";
+  addBtn.onclick = () => {
+    if (!name.value) {
+      toast("Name required");
+      return;
+    }
+    state.spellcasting.known.push({
+      id: id(),
+      name: name.value,
+      level: Number(level.value || 0),
+      prepared: prep.checked,
+    });
+    save();
+    render();
+  };
+  const lab = document.createElement("label");
+  lab.className = "row";
+  lab.style.alignItems = "center";
+  lab.innerHTML = "Prepared?";
+  lab.appendChild(prep);
+  add.append(name, level, lab, addBtn);
+  book.appendChild(add);
+
+  const list = document.createElement("table");
+  list.innerHTML =
+    "<thead><tr><th>Name</th><th>Level</th><th>Prepared</th><th></th></tr></thead><tbody></tbody>";
+  const lb = list.querySelector("tbody");
+  state.spellcasting.known
+    .sort((a, b) => a.level - b.level || a.name.localeCompare(b.name))
+    .forEach((s) => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `<td>${s.name}</td><td>${s.level}</td><td><input type="checkbox" ${
+        s.prepared ? "checked" : ""
+      }></td><td><button class="btn small danger">Delete</button></td>`;
+      tr.querySelector("input").onchange = (e) => {
+        s.prepared = e.target.checked;
+        save();
+      };
+      tr.querySelector("button").onclick = () => {
+        state.spellcasting.known = state.spellcasting.known.filter(
+          (x) => x.id !== s.id
+        );
+        save();
+        render();
+      };
+      lb.appendChild(tr);
+    });
+  book.appendChild(list);
+  root.appendChild(book);
+}
+
+// MODIFIED: Removed legacy armor/shield controls
+function renderInventory(root) {
+  const card = document.createElement("div");
+  card.className = "card";
+  card.innerHTML = "<h3>Inventory & Equipment</h3>";
+  root.appendChild(card);
+
+  // REMOVED: grid 'g', armorList, select('Armor'...), and 'sh' (shield checkbox)
+
+  const coins = document.createElement("div");
+  coins.className = "grid cols-4";
+  coins.innerHTML =
+    '<div><label>CP</label><input type="number"></div><div><label>SP</label><input type="number"></div><div><label>GP</label><input type="number"></div><div><label>PP</label><input type="number"></div>';
+  coins.style.marginBottom = "12px"; // Added margin for spacing
+  const [cp, sp, gp, pp] = coins.querySelectorAll("input");
+  cp.value = state.inventory.coins.cp;
+  sp.value = state.inventory.coins.sp;
+  gp.value = state.inventory.coins.gp;
+  pp.value = state.inventory.coins.pp;
+  [cp, sp, gp, pp].forEach((i, idx) => {
+    i.onchange = () => {
+      const keys = ["cp", "sp", "gp", "pp"];
+      state.inventory.coins[keys[idx]] = Number(i.value || 0);
+      save();
+    };
+  });
+  card.appendChild(coins);
+
+  const items = document.createElement("div");
+  items.className = "card";
+  items.innerHTML = "<h3>Pack</h3>";
+
+  // --- Start: Item Creation Fields ---
+  const itemTypes = [
+    "Select Item Type",
+    "Weapon",
+    "Armor",
+    "Shield",
+    "Consumable/Ammo",
+    "Focus/Tools",
+    "Gear",
+    "Magic Weapon",
+    "Magic Armor",
+    "Wondrous Item",
+  ];
+
+  // 1. General Fields (Always Visible)
+  const nameWrap = input("Name", "", (v) => {});
+  const typeSelectWrap = select(
+    "Item Type",
+    itemTypes[0],
+    itemTypes,
+    (v) => {
+      toggleItemFields(v);
+    }
+  );
+  const weightWrap = num("Weight", "", (v) => {});
+  const attunementReqWrap = select(
+    "Requires Attunement?",
+    "No",
+    ["No", "Yes"],
+    (v) => {}
+  ); // New Attunement Req field
+  attunementReqWrap.classList.add("hidden"); // MODIFIED: Hide by default
+
+  // Get the actual HTML input elements for value retrieval
+  const nameInput = nameWrap.querySelector('input[type="text"]');
+  const wtInput = weightWrap.querySelector('input[type="number"]');
+  const typeSelect = typeSelectWrap.querySelector("select");
+  const attunementSelect = attunementReqWrap.querySelector("select"); // New Attunement Req select
+
+  nameInput.placeholder = "Item name";
+  wtInput.placeholder = "Weight (lbs)";
+
+  // 2. Weapon-Specific Fields Container
+  const wepFieldsContainer = document.createElement("div");
+  wepFieldsContainer.id = "wepFields";
+  wepFieldsContainer.className = "grid cols-4 hidden"; // Hidden by default
+  const dmgDiceWrap = input("Damage Dice (e.g., 1d8)", "", (v) => {});
+  const dmgTypeWrap = input("Damage Type (e.g., Slashing)", "", (v) => {});
+  const abilSelectWrap = select(
+    "Ability Modifier",
+    "str",
+    ["str", "dex", "con", "int", "wis", "cha"],
+    (v) => {}
+  );
+  const profCheckWepWrap = document.createElement("div");
+  profCheckWepWrap.innerHTML = `<label>Proficient?</label><input type="checkbox">`;
+  const bonusNumWrap = num("Magic Bonus (+X)", "0", (v) => {});
+
+  wepFieldsContainer.append(
+    dmgDiceWrap,
+    dmgTypeWrap,
+    abilSelectWrap,
+    profCheckWepWrap
+  );
+
+  // Get weapon elements for value retrieval
+  const dmgDiceInput = dmgDiceWrap.querySelector('input[type="text"]');
+  const dmgTypeInput = dmgTypeWrap.querySelector('input[type="text"]');
+  const abilSelect = abilSelectWrap.querySelector("select");
+  const profCheckWep = profCheckWepWrap.querySelector(
+    'input[type="checkbox"]'
+  );
+  const bonusInput = bonusNumWrap.querySelector('input[type="number"]');
+
+  // 3. Armor-Specific Fields Container
+  const armorFieldsContainer = document.createElement("div");
+  armorFieldsContainer.id = "armorFields";
+  armorFieldsContainer.className = "grid cols-4 hidden";
+
+  const acBaseWrap = num("Base AC", "10", (v) => {});
+  const maxDexWrap = input("Max Dex Mod (e.g., 2, None)", "None", (v) => {});
+  const strReqWrap = num("STR Req (0 for None)", "0", (v) => {});
+  const profCheckArmorWrap = document.createElement("div");
+  profCheckArmorWrap.innerHTML = `<label>Proficient?</label><input type="checkbox" id="armorProfCheck">`;
+  const stealthDisWrap = document.createElement("div");
+  stealthDisWrap.innerHTML = `<label>Stealth Disadvantage?</label><input type="checkbox">`;
+  const armorBonusNumWrap = num("Magic Bonus (+X)", "0", (v) => {});
+
+  armorFieldsContainer.append(
+    acBaseWrap,
+    maxDexWrap,
+    strReqWrap,
+    profCheckArmorWrap,
+    stealthDisWrap,
+    armorBonusNumWrap
+  );
+
+  // Get armor elements for value retrieval
+  const acBaseInput = acBaseWrap.querySelector('input[type="number"]');
+  const maxDexInput = maxDexWrap.querySelector('input[type="text"]');
+  const strReqInput = strReqWrap.querySelector('input[type="number"]');
+  const profCheckArmor = profCheckArmorWrap.querySelector(
+    'input[type="checkbox"]'
+  );
+  const stealthDisCheck = stealthDisWrap.querySelector(
+    'input[type="checkbox"]'
+  );
+  const armorBonusInput = armorBonusNumWrap.querySelector(
+    'input[type="number"]'
+  );
+
+  // Armor Penalty Note (Dynamically shown)
+  const armorPenaltyNote = document.createElement("div");
+  armorPenaltyNote.id = "armorPenaltyNote";
+  armorPenaltyNote.className = "hidden";
+  armorPenaltyNote.textContent =
+    "If you wear armor that you lack proficiency with, you have disadvantage on any ability check, saving throw, or Attack roll that involves Strength or Dexterity, and you can’t cast Spells.";
+  armorFieldsContainer.appendChild(armorPenaltyNote);
+
+  // 4. Wondrous Item Fields Container
+  const wondrousFieldsContainer = document.createElement("div");
+  wondrousFieldsContainer.id = "wondrousFields";
+  wondrousFieldsContainer.className = "grid cols-4 hidden";
+
+  const abiBonusWrap = input(
+    "Ability Score Bonus (e.g. str+2, con+1)",
+    "",
+    (v) => {}
+  );
+  const setAbiWrap = input(
+    "Set Ability Score (e.g. con=19)",
+    "",
+    (v) => {}
+  );
+  const maxAbiWrap = input(
+    "Max Score Override (e.g. int=24)",
+    "",
+    (v) => {}
+  );
+  const acBonusWondrousWrap = num("AC Bonus", "0", (v) => {});
+  const saveDCBonusWrap = num("Spell Save DC Bonus", "0", (v) => {});
+  const speedBonusWondrousWrap = num("Speed Bonus", "0", (v) => {});
+  const flyingSpeedWrap = num("Flying Speed (0 for None)", "0", (v) => {});
+  const atkBonusWondrousWrap = num("Attack Bonus", "0", (v) => {});
+  const dmgBonusWondrousWrap = num("Damage Bonus", "0", (v) => {});
+  const tempHPGrantedWrap = input(
+    "Temp HP Dice (e.g. 5d6)",
+    "",
+    (v) => {}
+  );
+
+  wondrousFieldsContainer.append(
+    abiBonusWrap,
+    setAbiWrap,
+    maxAbiWrap,
+    acBonusWondrousWrap,
+    saveDCBonusWrap,
+    speedBonusWondrousWrap,
+    flyingSpeedWrap,
+    atkBonusWondrousWrap,
+    dmgBonusWondrousWrap,
+    tempHPGrantedWrap
+  );
+
+  // Get Wondrous Item elements for value retrieval
+  const abiBonusInput = abiBonusWrap.querySelector('input[type="text"]');
+  const setAbiInput = setAbiWrap.querySelector('input[type="text"]');
+  const maxAbiInput = maxAbiWrap.querySelector('input[type="text"]');
+  const acBonusWondrousInput = acBonusWondrousWrap.querySelector(
+    'input[type="number"]'
+  );
+  const saveDCBonusInput = saveDCBonusWrap.querySelector(
+    'input[type="number"]'
+  );
+  const speedBonusWondrousInput = speedBonusWondrousWrap.querySelector(
+    'input[type="number"]'
+  );
+  const flyingSpeedInput = flyingSpeedWrap.querySelector(
+    'input[type="number"]'
+  );
+  const atkBonusWondrousInput = atkBonusWondrousWrap.querySelector(
+    'input[type="number"]'
+  );
+  const dmgBonusWondrousInput = dmgBonusWondrousWrap.querySelector(
+    'input[type="number"]'
+  );
+  const tempHPGrantedInput = tempHPGrantedWrap.querySelector(
+    'input[type="text"]'
+  );
+
+  // 5. Notes section (Always Visible)
+  const notesWrap = document.createElement("div");
+  notesWrap.innerHTML = `<label id="notesLabel">Item Notes / Features</label><textarea id="itemNotes"></textarea>`;
+  const notesTextarea = notesWrap.querySelector("textarea");
+
+  // MODIFIED: Function to show/hide fields based on type selection
+  function toggleItemFields(selectedType) {
+    // Hide all type-specific fields
+    wepFieldsContainer.classList.add("hidden");
+    armorFieldsContainer.classList.add("hidden");
+    wondrousFieldsContainer.classList.add("hidden");
+
+    // MODIFIED: Show/hide attunement field based on magical type
+    const magicalTypes = ["Magic Weapon", "Magic Armor", "Wondrous Item"];
+    if (magicalTypes.includes(selectedType)) {
+      attunementReqWrap.classList.remove("hidden");
+    } else {
+      attunementReqWrap.classList.add("hidden");
+    }
+
+    // Show fields based on selection
+    if (selectedType === "Weapon" || selectedType === "Magic Weapon") {
+      wepFieldsContainer.classList.remove("hidden");
+    } else if (selectedType === "Armor" || selectedType === "Magic Armor") {
+      armorFieldsContainer.classList.remove("hidden");
+    } else if (selectedType === "Wondrous Item") {
+      wondrousFieldsContainer.classList.remove("hidden");
+    }
+
+    // Always check the penalty note when showing the armor fields
+    updateArmorPenaltyNote();
+  }
+
+  // Listener for the armor proficiency checkbox
+  profCheckArmor.onchange = updateArmorPenaltyNote;
+  function updateArmorPenaltyNote() {
+    if (profCheckArmor.checked) {
+      armorPenaltyNote.classList.add("hidden");
+    } else if (
+      armorFieldsContainer.classList.contains("hidden") === false
+    ) {
+      armorPenaltyNote.classList.remove("hidden");
+    }
+  }
+
+  const addBtn = document.createElement("button");
+  addBtn.className = "btn primary";
+  addBtn.textContent = "Add Item";
+  addBtn.onclick = () => {
+    const itemType = typeSelect.value;
+
+    if (!nameInput.value || itemType === "Select Item Type") {
+      toast("Name and Item Type required");
+      return;
+    }
+
+    const newItem = {
+      id: id(),
+      name: nameInput.value,
+      type: itemType,
+      weight: Number(wtInput.value || 0),
+      equipped: false,
+      // Attunement status is always saved for any item type
+      attunementRequired: attunementSelect.value,
+      attuned: false,
+    };
+
+    // Save WEAPON properties
+    if (itemType === "Weapon" || itemType === "Magic Weapon") {
+      newItem.wepDamageDice = dmgDiceInput.value;
+      newItem.wepDamageType = dmgTypeInput.value;
+      newItem.wepAbility = abilSelect.value;
+      newItem.wepProficient = profCheckWep.checked;
+      newItem.wepBonus = Number(bonusInput.value || 0);
+      newItem.wepNotes = notesTextarea.value;
+    }
+    // Save ARMOR properties
+    else if (itemType === "Armor" || itemType === "Magic Armor") {
+      newItem.armorAC = Number(acBaseInput.value);
+      newItem.armorDexCap = maxDexInput.value; // Store as string for "None"
+      newItem.armorStrReq = Number(strReqInput.value || 0);
+      newItem.armorProficient = profCheckArmor.checked;
+      newItem.armorStealthDis = stealthDisCheck.checked;
+      newItem.armorBonus = Number(armorBonusInput.value || 0); // New field for magic armor
+      newItem.wepNotes = notesTextarea.value;
+    }
+    // Save WONDROUS ITEM properties
+    else if (itemType === "Wondrous Item") {
+      newItem.attunementRequired = attunementSelect.value; // Redundant save, but ensures consistency
+      newItem.abiBonus = abiBonusInput.value;
+      newItem.setAbility = setAbiInput.value;
+      newItem.maxScoreOverride = maxAbiInput.value;
+      newItem.acBonus = Number(acBonusWondrousInput.value || 0);
+      newItem.saveDCBonus = Number(saveDCBonusInput.value || 0);
+      newItem.speedBonus = Number(speedBonusWondrousInput.value || 0);
+      newItem.flyingSpeed = Number(flyingSpeedInput.value || 0);
+      newItem.atkBonus = Number(atkBonusWondrousInput.value || 0);
+      newItem.dmgBonus = Number(dmgBonusWondrousInput.value || 0);
+      newItem.tempHPGranted = tempHPGrantedInput.value;
+      newItem.wepNotes = notesTextarea.value;
+    }
+    // Save generic notes for all other types
+    else {
+      newItem.wepNotes = notesTextarea.value;
+    }
+
+    state.inventory.items.push(newItem);
+    save();
+    render();
+  };
+
+  // --- Assembling the Item Builder UI ---
+  const itemAddGrid1 = document.createElement("div");
+  itemAddGrid1.className = "grid cols-5";
+  itemAddGrid1.style.alignItems = "flex-end";
+
+  // Grid 1: Name, Type, Weight, Attune Req, Add Button
+  const weightInputDiv = weightWrap.querySelector("input");
+  weightInputDiv.style.width = "calc(100% - 10px)";
+
+  itemAddGrid1.append(
+    nameWrap,
+    typeSelectWrap,
+    weightWrap,
+    attunementReqWrap,
+    addBtn
+  );
+  items.appendChild(itemAddGrid1);
+
+  // Add containers for dynamic fields
+  items.appendChild(wepFieldsContainer);
+  items.appendChild(armorFieldsContainer);
+  items.appendChild(wondrousFieldsContainer); // NEW
+
+  // Notes section
+  notesWrap.style.marginTop = "12px";
+  items.appendChild(notesWrap);
+
+  // Initialize dynamic fields (hidden)
+  toggleItemFields(itemTypes[0]);
+
+  // Table of current items
+  // FIX: Added "Attuned" header (now 7 columns)
+  const table = document.createElement("table");
+  table.innerHTML =
+    "<thead><tr><th>Name</th><th>Type</th><th>Weight</th><th>Attune Req</th><th>Attuned</th><th>Equip</th><th></th></tr></thead><tbody></tbody>";
+  const tb = table.querySelector("tbody");
+  state.inventory.items.forEach((i) => {
+    const tr = document.createElement("tr");
+
+    // Equipped checkbox handler
+    const toggleEquip = (e) => {
+      // Logic from last step: check if attunement is required but not met
+      if (i.attunementRequired === "Yes" && i.attuned === false) {
+        // This check is actually handled by the disabled attribute on the equip checkbox,
+        // but we keep the re-render flow.
+      }
+
+      i.equipped = e.target.checked;
+      recalcBasics(); // Recalculate basics (including speed, AC, HP, etc.)
+      save();
+      syncHeader(); // FIX: Call syncHeader immediately after save for instant header update
+      render(); // Re-render to update the Combat tab's attack list
+    };
+
+    // FIX: Corrected the order and number of table cells (<td>) to match the new 7-column header
+    tr.innerHTML = `
+      <td>${i.name}</td>
+      <td>${i.type || "Gear"}</td>
+      <td>${i.weight || 0}</td>
+      <td style="text-align:center;">${i.attunementRequired}</td>
+      <td style="text-align:center;"><input type="checkbox" data-attune-check="true" ${
+        i.attuned ? "checked" : ""
+      } ${i.attunementRequired === "Yes" ? "" : "disabled"}></td>
+      <td style="text-align:center;"><input type="checkbox" ${
+        i.equipped ? "checked" : ""
+      } ${
+      i.attunementRequired === "Yes" && i.attuned === false ? "disabled" : ""
+    }></td>
+      <td><button class="btn small danger" data-id="${i.id}">Delete</button></td>
+    `;
+
+    // NEW: Listener for Attune checkbox (data-attune-check)
+    const attuneCheck = tr.querySelector(
+      'input[data-attune-check="true"]'
+    );
+    if (attuneCheck) {
+      attuneCheck.onchange = (e) => {
+        i.attuned = e.target.checked;
+        recalcBasics(); // Recalculate stats in case attunement changes them
+        save();
+        render(); // Re-render to update Equip checkbox disabled state and stats
+      };
+    }
+    // Listener for Equip checkbox
+    tr.querySelector(
+      `input[type="checkbox"]:not([data-attune-check])`
+    ).onchange = toggleEquip;
+
+    // Delete handler for inventory items
+    tr.querySelector("button").onclick = () => {
+      state.inventory.items = state.inventory.items.filter(
+        (x) => x.id !== i.id
+      );
+      recalcBasics(); // Recalculate stats in case an equipped item was removed
+      save();
+      render();
+    };
+    tb.appendChild(tr);
+
+    // Display notes below the item row in Inventory
+    if (i.wepNotes) {
+      const notesTr = document.createElement("tr");
+      notesTr.className = "inventory-notes";
+      notesTr.innerHTML = `<td colspan="7">${i.wepNotes}</td>`; // FIX: colspan is 7 now
+      tb.appendChild(notesTr);
+    }
+  });
+  items.appendChild(table);
+  root.appendChild(items);
+}
+
+function renderNotes(root) {
+  const card = document.createElement("div");
+  card.className = "card";
+  card.innerHTML = "<h3>Notes</h3>";
+  const ta = document.createElement("textarea");
+  ta.value = state.notes.join("\n\n");
+  ta.onchange = () => {
+    state.notes = ta.value.split(/\n\n+/);
+    save();
+  };
+  card.appendChild(ta);
+  root.appendChild(card);
+
+  const logCard = document.createElement("div");
+  logCard.className = "card";
+  logCard.innerHTML =
+    '<h3>Session Log</h3><div id="logBox" style="height:200px; overflow:auto; border:1px solid var(--border); border-radius:10px; padding:10px"></div>';
+  root.appendChild(logCard);
+  renderLog();
+}
+
+function renderDice(root) {
+  const card = document.createElement("div");
+  card.className = "card";
+  card.innerHTML = "<h3>Dice Roller</h3>";
+  const row = document.createElement("div");
+  row.className = "row";
+  row.style.gap = "6px";
+  [4, 6, 8, 10, 12, 20, 100].forEach((n) => {
+    const b = document.createElement("button");
+    b.className = "btn";
+    b.textContent = `d${n}`;
+    b.onclick = () => {
+      const r = rollDice(`1d${n}`);
+      showRoll(r);
+    };
+    row.appendChild(b);
+  });
+  const adv = document.createElement("button");
+  adv.className = "btn";
+  adv.textContent = "Adv";
+  adv.onclick = () => {
+    showRoll(rollDice("2d20kh1"));
+  };
+  const dis = document.createElement("button");
+  dis.className = "btn";
+  dis.textContent = "Dis";
+  dis.onclick = () => {
+    showRoll(rollDice("2d20kl1"));
+  };
+  const inp = document.createElement("input");
+  inp.placeholder = "2d20kh1+5 or 4d6+3 or d%";
+  inp.className = "code";
+  inp.style.flex = "1";
+  const go = document.createElement("button");
+  go.className = "btn primary";
+  go.textContent = "Roll";
+  go.onclick = () => showRoll(rollDice(inp.value || "1d20"));
+  const clr = document.createElement("button");
+  clr.className = "btn ghost";
+  clr.textContent = "Clear Log";
+  clr.onclick = () => {
+    state.log = [];
+    save();
+    renderLog();
+  };
+  row.append(adv, dis, clr);
+  card.appendChild(row);
+  const row2 = document.createElement("div");
+  row2.className = "row";
+  row2.style.marginTop = "8px";
+  row2.append(inp, go);
+  card.appendChild(row2);
+  const kpiWrap = document.createElement("div");
+  kpiWrap.className = "grid cols-3";
+  kpiWrap.innerHTML = `
+    <div class="card"><span class="note">Last Total</span><div id="lastTotal" style="font-size:24px">—</div></div>
+    <div class="card"><span class="note">Breakdown</span><div id="lastDetail" class="code">—</div></div>
+    <div class="card"><span class="note">Rolls</span><div id="lastRolls" class="code">—</div></div>`;
+  card.appendChild(kpiWrap);
+  root.appendChild(card);
+
+  const logCard = document.createElement("div");
+  logCard.className = "card";
+  logCard.innerHTML =
+    '<h3>Log</h3><div id="logBox" style="height:220px; overflow:auto; border:1px solid var(--border); border-radius:10px; padding:10px"></div>';
+  root.appendChild(logCard);
+  renderLog();
+
+  function showRoll(res) {
+    if (res.error) {
+      toast(res.error);
+      return;
+    }
+    document.getElementById("lastTotal").textContent = res.total;
+    document.getElementById("lastDetail").textContent = res.detail;
+    document.getElementById("lastRolls").textContent = `[${res.rolls.join(
+      ", "
+    )}]`;
+  }
+}
+
+function renderAbout(root) {
+  const card = document.createElement("div");
+  card.className = "card";
+  card.innerHTML = `<h3>About</h3>
+    <p>This single file sheet follows the same visual language as the GM screen. Auto save to localStorage, export and import supported. Print for table view.</p>
+    <ul class="note">
+      <li>Builder: class, race, level, abilities, saves, skills.</li>
+      <li>Combat: AC, HP, dice, attacks with roller, death saves.</li>
+      <li>Spells: caster type, DC, slots, simple spellbook.</li>
+      <li>Inventory: armor, shield, coins, pack items and derived AC.</li>
+      <li>Dice: full parser with keep highest/lowest and modifier.</li>
+    </ul>`;
+  root.appendChild(card);
+}
+
+// ---------- Small helpers ----------
+function readout(label, value) {
+  const c = document.createElement("div");
+  c.className = "card";
+  c.innerHTML = `<label>${label}</label><div style="font-size:18px">${value}</div>`;
+  return c;
+}
+function kpi(label, value) {
+  const c = document.createElement("div");
+  c.className = "card";
+  c.innerHTML = `<span class="note">${label}</span><div style="font-size:22px">${value}</div>`;
+  return c;
+}
+function wrapNum(label, value, on) {
+  const w = document.createElement("div");
+  w.className = "card";
+  w.innerHTML = `<label>${label}</label>`;
+  const i = document.createElement("input");
+  i.type = "number";
+  i.value = value;
+  i.onchange = () => on(i.value);
+  w.appendChild(i);
+  return w;
+}
+function numWrap(label, current, on, readonly = false, calcVal = null) {
+  const c = document.createElement("div");
+  c.className = "card";
+  c.innerHTML = `<label>${label}</label>`;
+  const i = document.createElement("input");
+  i.type = "number";
+  i.value = current;
+  if (readonly) {
+    i.disabled = true;
+  }
+  c.appendChild(i);
+  if (calcVal != null) {
+    const b = document.createElement("button");
+    b.className = "btn small";
+    b.textContent = "Recalc";
+    b.onclick = () => {
+      on(calcVal);
+    };
+    c.appendChild(b);
+  }
+  i.onchange = () => on(i.value);
+  return c;
+}
+function wrapText(label, value, on) {
+  const w = document.createElement("div");
+  w.className = "card";
+  w.innerHTML = `<label>${label}</label>`;
+  const i = document.createElement("input");
+  i.type = "text";
+  i.value = value;
+  i.onchange = () => on(i.value);
+  w.appendChild(i);
+  return w;
+}
+function id() {
+  return "id-" + Math.random().toString(36).slice(2) + Date.now().toString(36);
+}
+
+// ---------- Dice engine + log ----------
+function rollDice(formula) {
+  const m = String(formula)
+    .toLowerCase()
+    .replaceAll(" ", "")
+    .match(/^(\d*)d(\d+|%)(k[hl]?\d+)?([+-]\d+)?$/);
+  if (!m) {
+    return { error: "Bad formula" };
+  }
+  let [_, countStr, faceStr, keep, modStr] = m;
+  let count = countStr ? parseInt(countStr, 10) : 1;
+  let faces = faceStr === "%" ? 100 : parseInt(faceStr, 10);
+  const flat = modStr ? parseInt(modStr, 10) : 0;
+  if (count > 1000) return { error: "Max 1000 dice" };
+  const rolls = Array.from(
+    { length: count },
+    () => 1 + Math.floor(Math.random() * faces)
+  );
+  let used = [...rolls];
+  if (keep) {
+    const km = keep.match(/^k([hl])?(\d+)$/);
+    const dir = km[1] || "h";
+    const n = parseInt(km[2], 10);
+    used.sort((a, b) => (dir === "h" ? b - a : a - b));
+    used.splice(n);
+  }
+  const total = used.reduce((a, b) => a + b, 0) + flat;
+  const detail = `${count}d${faces}${keep || ""}${
+    flat ? (flat > 0 ? `+${flat}` : flat) : ""
+  }`;
+  log(`Rolled ${detail}: [${rolls.join(", ")}] → ${total}`);
+  return { total, rolls, used, detail };
+}
+function log(text) {
+  state.log.unshift({
+    id: id(),
+    time: new Date().toLocaleString(),
+    text,
+  });
+  if (state.log.length > 200) state.log.pop();
+  save();
+  renderLog();
+}
+function renderLog() {
+  const box = document.getElementById("logBox");
+  if (!box) return;
+  box.innerHTML = state.log
+    .map(
+      (e) =>
+        `<div class="row"><span class="note" style="width:170px">${e.time}</span><span>${e.text}</span></div>`
+    )
+    .join("");
+}
+
+// NEW: Function to apply saved theme on load
+function applyTheme() {
+  const html = document.documentElement;
+  const savedTheme = localStorage.getItem(THEME_KEY);
+
+  // Clear existing theme classes first
+  html.classList.remove("light-theme", "parchment-theme");
+
+  if (savedTheme === "light") {
+    html.classList.add("light-theme");
+  } else if (savedTheme === "parchment") {
+    html.classList.add("parchment-theme");
+  } else if (savedTheme === "dark") {
+    // Dark is default, no class needed
+  } else {
+    // No theme saved, apply default (Parchment)
+    html.classList.add("parchment-theme");
+    localStorage.setItem(THEME_KEY, "parchment");
+  }
+}
+
+// ---------- Theme, print, import/export ----------
+// NOTE: This part needs to run after the DOM is loaded.
+// We wrap it in an event listener.
+document.addEventListener("DOMContentLoaded", () => {
+  const themeBtn = document.getElementById("themeBtn");
+  const printBtn = document.getElementById("printBtn");
+  const importFile = document.getElementById("importFile");
+  const exportBtn = document.getElementById("exportBtn");
+  const resetBtn = document.getElementById("resetBtn");
+
+  // MODIFIED: themeBtn.onclick now saves to localStorage
+  themeBtn.onclick = () => {
+    const html = document.documentElement;
+    let nextTheme = "light"; // Default next theme if current is dark
+
+    if (html.classList.contains("light-theme")) {
+      html.classList.remove("light-theme");
+      html.classList.add("parchment-theme");
+      nextTheme = "parchment";
+    } else if (html.classList.contains("parchment-theme")) {
+      html.classList.remove("parchment-theme");
+      // Now dark theme
+      nextTheme = "dark";
+    } else {
+      // Was dark, now light
+      html.classList.add("light-theme");
+      nextTheme = "light";
+    }
+
+    localStorage.setItem(THEME_KEY, nextTheme);
+  };
+
+  printBtn.onclick = () => {
+    window.print();
+  };
+  exportBtn.onclick = () => {
+    const data = new Blob([JSON.stringify(state, null, 2)], {
+      type: "application/json",
+    });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(data);
+    a.download = `${state.info.name || "character"}.json`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+  importFile.onchange = (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    const r = new FileReader();
+    r.onload = (ev) => {
+      try {
+        const js = JSON.parse(ev.target.result);
+        state = { ...defState(), ...js };
+        save();
+        render();
+        toast("Import complete");
+      } catch (err) {
+        alert("Invalid JSON");
+      }
+    };
+    r.readAsText(f);
+  };
+  resetBtn.onclick = reset;
+
+  // ---------- Boot ----------
+  applyTheme(); // NEW: Apply theme on boot
+  recalcFromClass();
+  recalcBasics();
+  buildNav();
+  render();
+});
