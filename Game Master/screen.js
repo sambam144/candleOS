@@ -1,0 +1,2765 @@
+// ---- State & Utilities ------------------------------------------------------
+const STORAGE_KEY = "gm_screen_v1";
+const defaultState = () => ({
+  party: [
+    {
+      id: id(),
+      name: "Aria",
+      role: "Rogue",
+      ac: 15,
+      hp: 27,
+      maxHp: 27,
+      pp: 15,
+      pi: 12,
+      pInv: 13,
+      notes: "",
+    },
+    {
+      id: id(),
+      name: "Borin",
+      role: "Fighter",
+      ac: 18,
+      hp: 34,
+      maxHp: 34,
+      pp: 12,
+      pi: 10,
+      pInv: 9,
+      notes: "",
+    },
+  ],
+  items: [
+    {
+      id: id(),
+      name: "Potion of Healing",
+      rarity: "Common",
+      type: "Potion",
+      attunement: false,
+      desc: "You regain 2d4+2 hit points when you drink this potion.",
+    },
+    {
+      id: id(),
+      name: "Bag of Holding",
+      rarity: "Uncommon",
+      type: "Wondrous item",
+      attunement: false,
+      desc: "This bag can hold up to 64 cubic feet of material, not exceeding 500 pounds.",
+    },
+    {
+      id: id(),
+      name: "+1 Longsword",
+      rarity: "Uncommon",
+      type: "Weapon",
+      attunement: true,
+      desc: "You have a +1 bonus to attack and damage rolls made with this magic weapon.",
+    },
+  ],
+  monsters: [
+    sampleMonster(
+      "Goblin",
+      "Small humanoid (goblinoid), neutral evil",
+      15,
+      7,
+      "30 ft.",
+      { str: 8, dex: 14, con: 10, int: 10, wis: 8, cha: 8 },
+      "Stealth +6",
+      "darkvision 60 ft., passive Perception 9",
+      "Common, Goblin",
+      "1/4 (50 XP)",
+      `Nimble Escape. The goblin can take the Disengage or Hide action as a bonus action on each of its turns.`,
+      `Scimitar. Melee Weapon Attack: +4 to hit, reach 5 ft., one target. Hit: 5 (1d6 + 2) slashing damage.`
+    ),
+    sampleMonster(
+      "Orc",
+      "Medium humanoid (orc), chaotic evil",
+      13,
+      15,
+      "30 ft.",
+      { str: 16, dex: 12, con: 16, int: 7, wis: 11, cha: 10 },
+      "Intimidation +2",
+      "darkvision 60 ft., passive Perception 10",
+      "Common, Orc",
+      "1/2 (100 XP)",
+      `Aggressive. As a bonus action, the orc can move up to its speed toward a hostile creature that it can see.`,
+      `Greataxe. Melee Weapon Attack: +5 to hit, reach 5 ft., one target. Hit: 9 (1d12 + 3) slashing damage.`
+    ),
+    sampleMonster(
+      "Ogre",
+      "Large giant, chaotic evil",
+      11,
+      59,
+      "40 ft.",
+      { str: 19, dex: 8, con: 16, int: 5, wis: 7, cha: 7 },
+      "",
+      "darkvision 60 ft., passive Perception 8",
+      "Common, Giant",
+      "2 (450 XP)",
+      `—`,
+      `Greatclub. Melee Weapon Attack: +6 to hit, reach 5 ft., one target. Hit: 13 (2d8 + 4) bludgeoning damage.`
+    ),
+  ],
+  log: [],
+  notes: [],
+  initiative: {
+    combatants: [],
+    turnIndex: 0,
+    round: 1,
+  },
+  savedNPCs: [],
+  savedLocations: [],
+  settings: { theme: "dark" },
+});
+
+function sampleMonster(
+  name,
+  sizeTypeAlign,
+  ac,
+  hp,
+  speed,
+  stats,
+  skills,
+  senses,
+  langs,
+  cr,
+  traits,
+  actions
+) {
+  return {
+    id: id(),
+    name,
+    sizeTypeAlign,
+    ac,
+    hp,
+    maxHp: hp,
+    speed,
+    stats,
+    skills,
+    senses,
+    languages: langs,
+    cr,
+    traits,
+    actions,
+    notes: "",
+  };
+}
+
+function id() {
+  return "id-" + Math.random().toString(36).slice(2) + Date.now().toString(36);
+}
+function save() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  counters();
+}
+function load() {
+  const raw = localStorage.getItem(STORAGE_KEY);
+  return raw ? JSON.parse(raw) : defaultState();
+}
+function resetState() {
+  if (confirm("Are you sure you want to delete all data? This cannot be undone.")) {
+    state = defaultState();
+    save();
+    route(currentRoute);
+    toast("State reset");
+  }
+}
+function exportState() {
+  const data = new Blob([JSON.stringify(state, null, 2)], {
+    type: "application/json",
+  });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(data);
+  a.download = "gm-screen-export.json";
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+function importState(file) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      const importedState = JSON.parse(e.target.result);
+      state = { ...defaultState(), ...importedState };
+      save();
+      route(currentRoute);
+      toast("Import complete");
+    } catch (err) {
+      showModal(
+        "Error",
+        '<p class="bad">Invalid JSON file. See console for details.</p>'
+      );
+      console.error(err);
+    }
+  };
+  reader.readAsText(file);
+}
+
+function toast(msg, duration = 2200) {
+  console.log(msg);
+  const t = document.createElement("div");
+  t.textContent = msg;
+  Object.assign(t.style, {
+    position: "fixed",
+    right: "16px",
+    bottom: "16px",
+    background: "var(--accent)",
+    color: "var(--bg)",
+    padding: "10px 14px",
+    border: "1px solid var(--border)",
+    borderRadius: "10px",
+    zIndex: 9999,
+    boxShadow: "0 4px 12px rgba(0,0,0,0.2)",
+  });
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), duration);
+}
+
+function showModal(title, content) {
+  const container = document.getElementById("modal-container");
+  const backdrop = document.createElement("div");
+  backdrop.className = "modal-backdrop";
+  backdrop.innerHTML = `
+        <div class="modal-content">
+            <div class="row" style="justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                <h3>${title}</h3>
+                <button class="btn small" id="modal-close-btn">Close</button>
+            </div>
+            <div>${content}</div>
+        </div>
+    `;
+  backdrop.querySelector("#modal-close-btn").onclick = () => backdrop.remove();
+  backdrop.onclick = (e) => {
+    if (e.target === backdrop) {
+      backdrop.remove();
+    }
+  };
+  container.appendChild(backdrop);
+}
+
+let state = load();
+let currentRoute = "dashboard";
+
+// ---- Router & Navigation ----------------------------------------------------
+const sections = [
+  { id: "dashboard", label: "Dashboard", icon: "📊", render: renderDashboard },
+  {
+    id: "initiative",
+    label: "Initiative Tracker",
+    icon: "⚔️",
+    render: renderInitiative,
+  },
+  { id: "dice", label: "Dice Roller", icon: "🎲", render: renderDice },
+  { id: "party", label: "Party Board", icon: "👥", render: renderParty },
+  { id: "notes", label: "Notes", icon: "📝", render: renderNotes },
+  { id: "loot", label: "Loot Generator", icon: "💰", render: renderLoot },
+  {
+    id: "generators",
+    label: "Generators",
+    icon: "✨",
+    render: renderGenerators,
+  },
+  { id: "npc_roster", label: "NPC Roster", icon: "🧑‍🤝‍🧑", render: renderNpcRoster },
+  {
+    id: "saved_locations",
+    label: "Saved Locations",
+    icon: "🏰",
+    render: renderSavedLocations,
+  },
+  {
+    id: "conditions",
+    label: "Conditions",
+    icon: "🧠",
+    render: renderConditions,
+  },
+  { id: "items", label: "Magic Items", icon: "🪄", render: renderItems },
+  { id: "bestiary", label: "Bestiary", icon: "🐲", render: renderBestiary },
+  { id: "about", label: "About & Help", icon: "❓", render: renderAbout },
+];
+
+function buildNav() {
+  const el = document.getElementById("nav");
+  el.innerHTML = "";
+  sections.forEach((s) => {
+    const b = document.createElement("button");
+    b.innerHTML = `<span>${s.icon}</span><span>${s.label}</span>`;
+    b.className = "navbtn";
+    b.onclick = () => route(s.id);
+    if (currentRoute === s.id) b.classList.add("active");
+    el.appendChild(b);
+  });
+}
+function route(id, param = null) {
+  currentRoute = id;
+  buildNav();
+  const sec = sections.find((x) => x.id === id);
+  if (!sec) return;
+  const v = document.getElementById("view");
+  if (!v) {
+    console.error("Fatal Error: #view element not found in DOM.");
+    return;
+  }
+  v.innerHTML = "";
+  sec.render(v, param);
+}
+
+// ---- Toolbar counters -------------------------------------------------------
+function counters() {
+  document.getElementById("initiativeCount").textContent =
+    state.initiative.combatants.length;
+  document.getElementById("logCount").textContent = state.log.length;
+  document.getElementById("noteCount").textContent = state.notes.length;
+  document.getElementById("monsterCount").textContent = state.monsters.length;
+  document.getElementById("itemCount").textContent = state.items.length;
+  document.getElementById("npcRosterCount").textContent =
+    state.savedNPCs.length;
+  document.getElementById("locationCount").textContent =
+    state.savedLocations.length;
+  document.getElementById("partyCount").textContent = state.party.length;
+}
+
+// ---- Dashboard --------------------------------------------------------------
+const CHEATSHEETS = {
+  actions: [
+    "Attack",
+    "Cast a Spell",
+    "Dash",
+    "Disengage",
+    "Dodge",
+    "Help",
+    "Hide",
+    "Ready",
+    "Search",
+    "Use an Object",
+  ],
+  cover: [
+    "**Half (+2 to AC/DEX saves):** Low wall, furniture, creature.",
+    "**Three-Quarters (+5 to AC/DEX saves):** Portcullis, arrow slit.",
+    "**Full:** Creature is completely concealed.",
+  ],
+  dcs: [
+    "**Very Easy:** 5",
+    "**Easy:** 10",
+    "**Medium:** 15",
+    "**Hard:** 20",
+    "**Very Hard:** 25",
+    "**Nearly Impossible:** 30",
+  ],
+  light: [
+    "**Candle:** 5 ft bright, 5 ft dim.",
+    "**Torch:** 20 ft bright, 20 ft dim.",
+    "**Lantern, Hooded:** 30 ft bright, 30 ft dim (or 5 ft dim cone).",
+  ],
+  skills: [
+    "**Acrobatics** (Dex)",
+    "**Animal Handling** (Wis)",
+    "**Arcana** (Int)",
+    "**Athletics** (Str)",
+    "**Deception** (Cha)",
+    "**History** (Int)",
+    "**Insight** (Wis)",
+    "**Intimidation** (Cha)",
+    "**Investigation** (Int)",
+    "**Medicine** (Wis)",
+    "**Nature** (Int)",
+    "**Perception** (Wis)",
+    "**Performance** (Cha)",
+    "**Persuasion** (Cha)",
+    "**Religion** (Int)",
+    "**Sleight of Hand** (Dex)",
+    "**Stealth** (Dex)",
+    "**Survival** (Wis)",
+  ],
+};
+
+function renderDashboard(root) {
+  const grid = document.createElement("div");
+  grid.id = "dashboard-grid";
+  grid.className = "grid";
+  root.appendChild(grid);
+
+  // 1. Lite Dice Roller
+  const rollerCard = document.createElement("div");
+  rollerCard.className = "card";
+  rollerCard.innerHTML = `
+        <h3>Quick Roll</h3>
+        <div class="row" style="gap:6px; flex-wrap:wrap">
+            ${[4, 6, 8, 10, 12, 20, 100]
+              .map((n) => `<button class="btn" data-d="${n}">d${n}</button>`)
+              .join("")}
+        </div>
+        <div class="row" style="margin-top:8px; gap:6px;">
+            <button class="btn" id="dashAdv">Adv (d20)</button>
+            <button class="btn" id="dashDis">Dis (d20)</button>
+        </div>
+        <div class="meter" style="margin-top:10px; text-align:center;">
+            <span class="muted">Last Roll</span>
+            <b id="dashResult" style="font-size: 24px;">—</b>
+        </div>
+    `;
+  rollerCard.querySelectorAll("[data-d]").forEach(
+    (btn) =>
+      (btn.onclick = () => {
+        const res = rollDice(`1d${btn.dataset.d}`);
+        rollerCard.querySelector("#dashResult").textContent = res.total;
+      })
+  );
+  rollerCard.querySelector("#dashAdv").onclick = () => {
+    const res = rollDice("2d20kh1");
+    rollerCard.querySelector("#dashResult").textContent = res.total;
+  };
+  rollerCard.querySelector("#dashDis").onclick = () => {
+    const res = rollDice("2d20kl1");
+    rollerCard.querySelector("#dashResult").textContent = res.total;
+  };
+  grid.appendChild(rollerCard);
+
+  // 2. Party Snapshot
+  const partyCard = document.createElement("div");
+  partyCard.className = "card";
+  partyCard.innerHTML = `<h3>Party Snapshot</h3><div id="partySnapshot"></div>`;
+  const snapshotEl = partyCard.querySelector("#partySnapshot");
+  if (state.party.length > 0) {
+    const table = document.createElement("table");
+    table.innerHTML =
+      `<thead><tr><th>Name</th><th>HP</th><th>AC</th></tr></thead><tbody>` +
+      state.party
+        .map(
+          (pc) => `
+                <tr>
+                    <td>${pc.name}</td>
+                    <td>${pc.hp} / ${pc.maxHp}</td>
+                    <td>${pc.ac}</td>
+                </tr>
+            `
+        )
+        .join("") +
+      `</tbody>`;
+    snapshotEl.appendChild(table);
+  } else {
+    snapshotEl.innerHTML = `<p class="muted">No party members found. Add them in the Party Board.</p>`;
+  }
+  grid.appendChild(partyCard);
+
+  // 3. Cheat Sheets
+  const renderCheatSheet = (title, items) => {
+    const card = document.createElement("div");
+    card.className = "card";
+    card.innerHTML =
+      `<h3>${title}</h3><ul class="cheatsheet-list">` +
+      items
+        .map((item) => `<li>${item.replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")}</li>`)
+        .join("") +
+      `</ul>`;
+    return card;
+  };
+
+  grid.appendChild(renderCheatSheet("Actions in Combat", CHEATSHEETS.actions));
+  grid.appendChild(renderCheatSheet("Conditions", CONDITIONS.map((c) => c.name)));
+  grid.appendChild(renderCheatSheet("Setting DCs", CHEATSHEETS.dcs));
+  grid.appendChild(renderCheatSheet("Cover", CHEATSHEETS.cover));
+  grid.appendChild(renderCheatSheet("Light Sources", CHEATSHEETS.light));
+  grid.appendChild(renderCheatSheet("Skills by Ability", CHEATSHEETS.skills));
+}
+
+// ---- Initiative Tracker -----------------------------------------------------
+function renderInitiative(root) {
+  const container = document.createElement("div");
+  container.className = "split";
+  root.appendChild(container);
+
+  // Left side: Add combatants
+  const addCard = document.createElement("div");
+  addCard.className = "card";
+  addCard.innerHTML = `
+        <h3>Add Combatants</h3>
+        <div class="grid cols-2">
+            <div>
+                <label>Type</label>
+                <select id="init-add-type">
+                    <option value="pc">PC</option>
+                    <option value="monster">Monster</option>
+                    <option value="custom">Custom</option>
+                </select>
+            </div>
+            <div id="init-selector-container">
+                </div>
+        </div>
+        <div id="init-custom-name-container" class="hidden" style="margin-top:8px;">
+            <label>Name</label>
+            <input id="init-custom-name" type="text">
+        </div>
+        <div class="grid cols-3" style="margin-top:8px;">
+            <div><label>Initiative</label><input id="init-add-score" type="number" required></div>
+            <div><label>HP</label><input id="init-add-hp" type="number"></div>
+            <div><label>AC</label><input id="init-add-ac" type="number"></div>
+        </div>
+        <div class="footer-actions">
+            <button id="init-add-btn" class="btn primary">Add to Combat</button>
+        </div>
+    `;
+  container.appendChild(addCard);
+
+  // Right side: Tracker list
+  const trackerCard = document.createElement("div");
+  trackerCard.className = "card";
+  trackerCard.innerHTML = `
+        <div class="row" style="justify-content: space-between;">
+            <h3>Initiative Order (Round <span id="init-round-counter">1</span>)</h3>
+            <div class="row">
+                <button id="init-prev-btn" class="btn small">◀ Prev</button>
+                <button id="init-next-btn" class="btn small primary">Next ▶</button>
+            </div>
+        </div>
+        <div style="max-height: 60vh; overflow-y: auto;">
+            <table id="initiative-list">
+                <thead><tr><th>#</th><th>Name</th><th>HP</th><th>AC</th><th>Actions</th></tr></thead>
+                <tbody></tbody>
+            </table>
+        </div>
+        <div class="footer-actions">
+            <button id="init-sort-btn" class="btn">Sort</button>
+            <button id="init-clear-btn" class="btn danger">Clear All</button>
+        </div>
+    `;
+  container.appendChild(trackerCard);
+
+  // --- Logic ---
+  const typeSelect = addCard.querySelector("#init-add-type");
+  const selectorContainer = addCard.querySelector("#init-selector-container");
+  const customNameContainer = addCard.querySelector(
+    "#init-custom-name-container"
+  );
+
+  const scoreInput = addCard.querySelector("#init-add-score");
+  const hpInput = addCard.querySelector("#init-add-hp");
+  const acInput = addCard.querySelector("#init-add-ac");
+
+  const listBody = trackerCard.querySelector("#initiative-list tbody");
+
+  function updateAddForm() {
+    const type = typeSelect.value;
+    customNameContainer.classList.toggle("hidden", type !== "custom");
+    selectorContainer.innerHTML = "";
+    let options = [];
+
+    if (type === "pc") {
+      options = state.party;
+    } else if (type === "monster") {
+      options = state.monsters;
+    }
+
+    if (options.length > 0) {
+      const select = document.createElement("select");
+      select.id = "init-add-entity";
+      select.innerHTML = options
+        .map((o) => `<option value="${o.id}">${o.name}</option>`)
+        .join("");
+      selectorContainer.appendChild(select);
+
+      select.onchange = () => {
+        const entity = options.find((o) => o.id === select.value);
+        if (entity) {
+          hpInput.value = entity.hp || "";
+          acInput.value = entity.ac || "";
+        }
+      };
+      select.dispatchEvent(new Event("change")); // Trigger once to populate
+    }
+  }
+
+  function drawTracker() {
+    const { combatants, turnIndex, round } = state.initiative;
+    trackerCard.querySelector("#init-round-counter").textContent = round;
+    listBody.innerHTML = "";
+    combatants.forEach((c, index) => {
+      const row = document.createElement("tr");
+      if (index === turnIndex) row.classList.add("current-turn");
+      row.innerHTML = `
+                <td><input type="number" class="small-input" value="${c.initiative}" data-id="${c.id}" data-prop="initiative" style="width: 50px;"></td>
+                <td>${c.name}</td>
+                <td><input type="number" class="small-input" value="${c.hp}" data-id="${c.id}" data-prop="hp" style="width: 60px;"></td>
+                <td>${c.ac}</td>
+                <td><button class="btn small danger" data-id="${c.id}" data-act="remove">X</button></td>
+            `;
+      listBody.appendChild(row);
+    });
+    counters();
+  }
+
+  function sortTracker() {
+    state.initiative.combatants.sort((a, b) => b.initiative - a.initiative);
+    state.initiative.turnIndex = 0;
+    state.initiative.round = 1;
+    drawTracker();
+    save();
+  }
+
+  // Event Listeners
+  typeSelect.onchange = updateAddForm;
+
+  addCard.querySelector("#init-add-btn").onclick = () => {
+    const type = typeSelect.value;
+    const score = Number(scoreInput.value);
+    if (!score) {
+      toast("Initiative score is required.");
+      return;
+    }
+
+    let name = "";
+    let hp = Number(hpInput.value) || 0;
+    let ac = Number(acInput.value) || 0;
+
+    if (type === "custom") {
+      name = addCard.querySelector("#init-custom-name").value.trim();
+    } else {
+      const select = selectorContainer.querySelector("select");
+      if (!select) {
+        toast("No available PCs or Monsters.");
+        return;
+      }
+      const entityId = select.value;
+      const source = type === "pc" ? state.party : state.monsters;
+      const entity = source.find((e) => e.id === entityId);
+      if (entity) {
+        name = entity.name;
+        // Check if multiple monsters of the same name exist
+        const existingCount = state.initiative.combatants.filter((c) =>
+          c.name.startsWith(entity.name)
+        ).length;
+        if (existingCount > 0) {
+          name += ` #${existingCount + 1}`;
+        }
+      }
+    }
+
+    if (!name) {
+      toast("Name is required.");
+      return;
+    }
+
+    state.initiative.combatants.push({
+      id: id(),
+      name,
+      initiative: score,
+      hp,
+      ac,
+    });
+    sortTracker();
+    scoreInput.value = ""; // Clear for next entry
+  };
+
+  trackerCard.querySelector("#init-sort-btn").onclick = sortTracker;
+  trackerCard.querySelector("#init-clear-btn").onclick = () => {
+    state.initiative = defaultState().initiative;
+    drawTracker();
+    save();
+    toast("Initiative cleared.");
+  };
+  trackerCard.querySelector("#init-next-btn").onclick = () => {
+    if (state.initiative.combatants.length === 0) return;
+    let newIndex = state.initiative.turnIndex + 1;
+    if (newIndex >= state.initiative.combatants.length) {
+      newIndex = 0;
+      state.initiative.round++;
+      log(`--- Round ${state.initiative.round} ---`);
+    }
+    state.initiative.turnIndex = newIndex;
+    log(`Turn: ${state.initiative.combatants[newIndex].name}`);
+    drawTracker();
+    save();
+  };
+  trackerCard.querySelector("#init-prev-btn").onclick = () => {
+    if (state.initiative.combatants.length === 0) return;
+    let newIndex = state.initiative.turnIndex - 1;
+    if (newIndex < 0) {
+      newIndex = state.initiative.combatants.length - 1;
+      if (state.initiative.round > 1) state.initiative.round--;
+    }
+    state.initiative.turnIndex = newIndex;
+    drawTracker();
+    save();
+  };
+
+  listBody.addEventListener("change", (e) => {
+    const input = e.target;
+    const id = input.dataset.id;
+    const prop = input.dataset.prop;
+    const combatant = state.initiative.combatants.find((c) => c.id === id);
+    if (combatant) {
+      combatant[prop] = Number(input.value);
+      save();
+    }
+  });
+
+  listBody.addEventListener("click", (e) => {
+    if (e.target.dataset.act === "remove") {
+      const id = e.target.dataset.id;
+      state.initiative.combatants = state.initiative.combatants.filter(
+        (c) => c.id !== id
+      );
+      if (state.initiative.turnIndex >= state.initiative.combatants.length) {
+        state.initiative.turnIndex = 0;
+      }
+      drawTracker();
+      save();
+    }
+  });
+
+  // Initial setup
+  updateAddForm();
+  drawTracker();
+}
+
+// ---- Dice Roller ------------------------------------------------------------
+function rollDice(formula) {
+  // Supports: 2d20kh1+5, 4d6+3, d%, d20-1, advantage/disadvantage buttons
+  const match = String(formula)
+    .toLowerCase()
+    .replaceAll(" ", "")
+    .match(/^(\d*)d(\d+|%)(k[hl]?\d+)?([+-]\d+)?$/);
+  if (!match) {
+    return { error: "Bad formula" };
+  }
+  let [_, countStr, faceStr, keep, modStr] = match;
+  let count = countStr ? parseInt(countStr, 10) : 1;
+  let faces = faceStr === "%" ? 100 : parseInt(faceStr, 10);
+  const mod = modStr ? parseInt(modStr, 10) : 0;
+  if (count > 1000) return { error: "Max 1000 dice" };
+  const rolls = Array.from(
+    { length: count },
+    () => 1 + Math.floor(Math.random() * faces)
+  );
+  let used = [...rolls];
+  if (keep) {
+    const m = keep.match(/^k([hl])?(\d+)$/);
+    const dir = m[1] || "h";
+    const n = parseInt(m[2], 10);
+    used.sort((a, b) => (dir === "h" ? b - a : a - b));
+    used.splice(n);
+  }
+  const total = used.reduce((a, b) => a + b, 0) + mod;
+  const detail = `${count}d${faces}${keep || ""}${
+    mod ? (mod > 0 ? `+${mod}` : mod) : ""
+  }`;
+  log(`Rolled ${detail}: [${rolls.join(", ")}] → ${total}`);
+  return { total, rolls, used, detail };
+}
+
+function renderDice(root) {
+  const wrap = document.createElement("div");
+  wrap.className = "grid cols-2";
+
+  // Left: controls
+  const controls = document.createElement("div");
+  controls.className = "card";
+  controls.innerHTML = `
+    <h3>Dice Roller</h3>
+    <div class="row" style="gap:6px; flex-wrap:wrap">
+      ${[4, 6, 8, 10, 12, 20, 100]
+        .map((n) => `<button class="btn" data-d="${n}">d${n}</button>`)
+        .join("")}
+      <button class="btn" id="advBtn">Adv</button>
+      <button class="btn" id="disBtn">Dis</button>
+      <button class="btn ghost" id="clearLog">Clear Log</button>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <input id="diceInput" class="code grow" placeholder="e.g. 2d20kh1+5, 4d6+3, d%" />
+      <button class="btn primary" id="rollBtn">Roll</button>
+    </div>
+    <div class="kpi" style="margin-top:10px">
+      <div class="meter"><span class="muted">Last Total</span><b id="lastTotal">—</b></div>
+      <div class="meter"><span class="muted">Breakdown</span><div id="lastDetail" class="code">—</div></div>
+      <div class="meter"><span class="muted">Rolls</span><div id="lastRolls" class="code">—</div></div>
+      <div class="meter"><span class="muted">Kept</span><div id="lastUsed" class="code">—</div></div>
+    </div>
+  `;
+
+  const performRoll = (formula) => {
+    const res = rollDice(formula);
+    if (res.error) {
+      toast(res.error);
+      return;
+    }
+    updateLast(res);
+  };
+
+  controls.querySelectorAll("[data-d]").forEach((btn) => {
+    btn.onclick = () => {
+      performRoll(`1d${btn.getAttribute("data-d")}`);
+    };
+  });
+  controls.querySelector("#advBtn").onclick = () => {
+    performRoll("2d20kh1");
+  };
+  controls.querySelector("#disBtn").onclick = () => {
+    performRoll("2d20kl1");
+  };
+  controls.querySelector("#rollBtn").onclick = () => {
+    performRoll(controls.querySelector("#diceInput").value || "1d20");
+  };
+  controls.querySelector("#diceInput").onkeydown = (e) => {
+    if (e.key === "Enter") {
+      performRoll(e.target.value || "1d20");
+    }
+  };
+  controls.querySelector("#clearLog").onclick = () => {
+    state.log = [];
+    save();
+    renderLog();
+  };
+
+  function updateLast(res) {
+    controls.querySelector("#lastTotal").textContent = res.total;
+    controls.querySelector("#lastDetail").textContent = res.detail;
+    controls.querySelector("#lastRolls").textContent = `[${res.rolls.join(
+      ", "
+    )}]`;
+    controls.querySelector("#lastUsed").textContent = `[${res.used.join(", ")}]`;
+    save();
+    renderLog();
+  }
+
+  // Right: log
+  const logCard = document.createElement("div");
+  logCard.className = "card";
+  logCard.innerHTML = `
+    <h3>Session Log</h3>
+    <div id="logBox" class="log"></div>
+  `;
+
+  wrap.appendChild(controls);
+  wrap.appendChild(logCard);
+  root.appendChild(wrap);
+  renderLog();
+}
+function log(text) {
+  state.log.unshift({ id: id(), time: new Date().toLocaleString(), text });
+  if (state.log.length > 200) state.log.pop();
+  save();
+}
+function renderLog() {
+  const box = document.getElementById("logBox");
+  if (!box) return;
+  box.innerHTML = state.log
+    .map(
+      (e) =>
+        `<div class="row"><span class="muted" style="width:170px; font-size:12px;">${e.time}</span><span>${e.text}</span></div>`
+    )
+    .join("");
+  counters();
+}
+
+// ---- Party Board ------------------------------------------------------------
+function renderParty(root) {
+  const card = document.createElement("div");
+  card.className = "card";
+  card.innerHTML = `
+    <h3>Party Board</h3>
+    <div class="row">
+      <button class="btn small" id="addPc">Add PC</button>
+      <button class="btn small danger" id="clearZero">Remove 0 HP PCs</button>
+    </div>
+    <div class="grid cols-2" id="pcGrid" style="margin-top:10px"></div>
+  `;
+  root.appendChild(card);
+  const grid = card.querySelector("#pcGrid");
+
+  function draw() {
+    grid.innerHTML = "";
+    state.party.forEach((pc) => {
+      const el = document.createElement("div");
+      el.className = "card";
+      el.innerHTML = `
+        <div class="grid cols-2">
+          <div><label>Name</label><input type="text" value="${
+            pc.name || ""
+          }" data-k="name"></div>
+          <div><label>Role</label><input type="text" value="${
+            pc.role || ""
+          }" data-k="role"></div>
+        </div>
+        <div class="grid cols-4" style="margin-top:8px">
+          <div><label>AC</label><input type="number" value="${
+            pc.ac || 0
+          }" data-k="ac"></div>
+          <div><label>HP</label><input type="number" value="${
+            pc.hp || 0
+          }" data-k="hp"></div>
+          <div><label>Max</label><input type="number" value="${
+            pc.maxHp || 0
+          }" data-k="maxHp"></div>
+          <div><label>PP</label><input type="number" value="${
+            pc.pp || 0
+          }" data-k="pp"></div>
+        </div>
+        <div class="grid cols-2" style="margin-top:8px">
+          <div><label>PI</label><input type="number" value="${
+            pc.pi || 0
+          }" data-k="pi"></div>
+          <div><label>P.Inv</label><input type="number" value="${
+            pc.pInv || 0
+          }" data-k="pInv"></div>
+        </div>
+        <div style="margin-top:8px"><label>Notes</label><textarea data-k="notes">${
+          pc.notes || ""
+        }</textarea></div>
+        <div class="footer-actions">
+          <button class="btn small" data-act="heal">+5</button>
+          <button class="btn small" data-act="hurt">-5</button>
+          <button class="btn small" data-act="clone">Clone</button>
+          <button class="btn small danger" data-act="del">Remove</button>
+        </div>
+      `;
+      el.querySelectorAll("input,textarea").forEach((inp) => {
+        inp.onchange = () => {
+          const k = inp.getAttribute("data-k");
+          pc[k] = inp.type === "number" ? Number(inp.value) : inp.value;
+          save();
+        };
+      });
+      el.querySelector('[data-act="heal"]').onclick = () => {
+        pc.hp = Math.min((pc.hp || 0) + 5, pc.maxHp || pc.hp || 0);
+        save();
+        draw();
+      };
+      el.querySelector('[data-act="hurt"]').onclick = () => {
+        pc.hp = Math.max((pc.hp || 0) - 5, 0);
+        save();
+        draw();
+      };
+      el.querySelector('[data-act="del"]').onclick = () => {
+        state.party = state.party.filter((x) => x.id !== pc.id);
+        save();
+        draw();
+        toast("PC removed");
+      };
+      el.querySelector('[data-act="clone"]').onclick = () => {
+        const c = { ...pc, id: id(), name: pc.name + " (Copy)" };
+        state.party.push(c);
+        save();
+        draw();
+      };
+      grid.appendChild(el);
+    });
+  }
+  draw();
+  card.querySelector("#addPc").onclick = () => {
+    state.party.push({
+      id: id(),
+      name: "New PC",
+      role: "",
+      ac: 10,
+      hp: 10,
+      maxHp: 10,
+      pp: 10,
+      pi: 10,
+      pInv: 10,
+      notes: "",
+    });
+    save();
+    draw();
+  };
+  card.querySelector("#clearZero").onclick = () => {
+    state.party = state.party.filter((pc) => (pc.hp || 0) > 0);
+    save();
+    draw();
+    toast("Removed 0 HP PCs");
+  };
+}
+
+// ---- Notes Section ----------------------------------------------------------
+function renderNotes(root) {
+  let editingId = null;
+
+  const container = document.createElement("div");
+  container.className = "split";
+  root.appendChild(container);
+
+  // Form for new/editing notes
+  const formCard = document.createElement("div");
+  formCard.className = "card";
+  formCard.innerHTML = `
+        <h3 id="noteFormTitle">Add a Note</h3>
+        <input type="hidden" id="noteEditId">
+        <textarea id="noteInput" placeholder="Type your campaign note here..."></textarea>
+        <div class="footer-actions">
+            <button class="btn ghost" id="cancelEditBtn" style="display:none;">Cancel</button>
+            <button class="btn primary" id="saveNoteBtn">Save Note</button>
+        </div>
+    `;
+  container.appendChild(formCard);
+
+  // Container for the list of notes
+  const listCard = document.createElement("div");
+  listCard.className = "card";
+  listCard.innerHTML = `
+        <h3>Campaign Notes</h3>
+        <div id="notesList"></div>
+    `;
+  container.appendChild(listCard);
+
+  const noteInput = formCard.querySelector("#noteInput");
+  const saveBtn = formCard.querySelector("#saveNoteBtn");
+  const cancelBtn = formCard.querySelector("#cancelEditBtn");
+  const formTitle = formCard.querySelector("#noteFormTitle");
+  const notesList = listCard.querySelector("#notesList");
+
+  function drawNotes() {
+    notesList.innerHTML = "";
+    if (state.notes.length === 0) {
+      notesList.innerHTML = `<p class="muted">No notes yet. Add one!</p>`;
+    }
+    // Sort by timestamp, newest first
+    const sortedNotes = [...state.notes].sort(
+      (a, b) => new Date(b.timestamp) - new Date(a.timestamp)
+    );
+
+    sortedNotes.forEach((note) => {
+      const noteEl = document.createElement("div");
+      noteEl.className = `card note ${note.isSpecial ? "special" : ""}`;
+      noteEl.dataset.id = note.id;
+      noteEl.innerHTML = `
+                <p style="white-space: pre-wrap; margin-top:0;">${note.text}</p>
+                <div class="row" style="justify-content: space-between; align-items: center; margin-top: 10px;">
+                    <span class="muted" style="font-size: 12px;">${new Date(
+                      note.timestamp
+                    ).toLocaleString()}</span>
+                    <div class="row">
+                        <label style="margin-bottom:0; cursor:pointer;"><input type="checkbox" data-act="special" ${
+                          note.isSpecial ? "checked" : ""
+                        }> Special</label>
+                        <button class="btn small" data-act="edit">Edit</button>
+                        <button class="btn small danger" data-act="delete">Delete</button>
+                    </div>
+                </div>
+            `;
+      notesList.appendChild(noteEl);
+    });
+    counters();
+  }
+
+  function clearForm() {
+    editingId = null;
+    noteInput.value = "";
+    formTitle.textContent = "Add a Note";
+    saveBtn.textContent = "Save Note";
+    cancelBtn.style.display = "none";
+  }
+
+  function handleSave() {
+    const text = noteInput.value.trim();
+    if (!text) {
+      toast("Note cannot be empty.");
+      return;
+    }
+
+    if (editingId) {
+      // Update existing note
+      const note = state.notes.find((n) => n.id === editingId);
+      if (note) {
+        note.text = text;
+        note.timestamp = new Date().toISOString();
+        toast("Note updated");
+      }
+    } else {
+      // Create new note
+      const newNote = {
+        id: id(),
+        text: text,
+        timestamp: new Date().toISOString(),
+        isSpecial: false,
+      };
+      state.notes.push(newNote);
+      toast("Note saved");
+    }
+    save();
+    clearForm();
+    drawNotes();
+  }
+
+  saveBtn.addEventListener("click", handleSave);
+  cancelBtn.addEventListener("click", clearForm);
+
+  notesList.addEventListener("click", (e) => {
+    const target = e.target;
+    const action = target.dataset.act;
+    if (!action) return;
+
+    const noteEl = target.closest(".note");
+    if (!noteEl) return; // FIX: Add guard clause to prevent errors
+    const noteId = noteEl.dataset.id;
+    const note = state.notes.find((n) => n.id === noteId);
+    if (!note) return;
+
+    if (action === "delete") {
+      state.notes = state.notes.filter((n) => n.id !== noteId);
+      save();
+      drawNotes();
+      toast("Note deleted");
+    } else if (action === "edit") {
+      editingId = noteId;
+      noteInput.value = note.text;
+      formTitle.textContent = "Editing Note";
+      saveBtn.textContent = "Save Changes";
+      cancelBtn.style.display = "inline-block";
+      noteInput.focus();
+    } else if (action === "special") {
+      note.isSpecial = target.checked;
+      save();
+      drawNotes();
+    }
+  });
+
+  drawNotes();
+}
+
+// ---- Loot Generator ---------------------------------------------------------
+function renderLoot(root) {
+  const card = document.createElement("div");
+  card.className = "card";
+  card.innerHTML = `
+    <h3>Loot Generator</h3>
+    <div class="grid cols-4">
+      <div><label>Mode</label>
+        <select id="lootMode">
+          <option value="quick">Quick (per encounter)</option>
+          <option value="hoard">Hoard (big score)</option>
+        </select>
+      </div>
+      <div><label>CR or Level</label><input id="lootCR" type="number" value="3" min="0"></div>
+      <div><label>Party Size</label><input id="lootParty" type="number" value="4" min="1"></div>
+      <div><label>Magic Chance (%)</label><input id="lootMagic" type="number" value="15" min="0" max="100"></div>
+    </div>
+    <div class="row" style="margin-top:8px"><button class="btn primary" id="genLoot">Generate Loot</button><button class="btn" id="addToLog">Log as Note</button></div>
+    <div id="lootOut" style="margin-top:10px"></div>
+  `;
+  root.appendChild(card);
+
+  const out = card.querySelector("#lootOut");
+  const btn = card.querySelector("#genLoot");
+  const addLog = card.querySelector("#addToLog");
+
+  function generate() {
+    const mode = card.querySelector("#lootMode").value;
+    const CR = Number(card.querySelector("#lootCR").value || 0);
+    const party = Number(card.querySelector("#lootParty").value || 4);
+    const magicChance = Number(card.querySelector("#lootMagic").value || 0);
+
+    const coins = rollCoins(mode, CR, party);
+    const treasure = rollTreasure(mode, CR);
+    const magic =
+      Math.random() * 100 < magicChance && state.items.length
+        ? [pick(state.items).name]
+        : [];
+
+    const html = `
+      <div class="kpi">
+        <div class="meter"><span class="muted">Copper</span><b>${coins.cp}</b></div>
+        <div class="meter"><span class="muted">Silver</span><b>${coins.sp}</b></div>
+        <div class="meter"><span class="muted">Gold</span><b>${coins.gp}</b></div>
+        <div class="meter"><span class="muted">Platinum</span><b>${coins.pp}</b></div>
+      </div>
+      <div class="card" style="margin-top:10px">
+        <b>Other Treasure</b>
+        <ul>${
+          treasure.map((t) => `<li>${t}</li>`).join("") ||
+          '<li class="muted">None</li>'
+        }</ul>
+        <b>Magic</b>
+        <ul>${
+          magic.map((m) => `<li>${m}</li>`).join("") ||
+          '<li class="muted">None</li>'
+        }</ul>
+      </div>
+    `;
+    out.innerHTML = html;
+    return { coins, treasure, magic };
+  }
+  btn.onclick = generate;
+
+  // FIX: Change handler to add to campaign notes instead of session log
+  addLog.onclick = () => {
+    const text = out.innerText;
+    if (text && text.trim()) {
+      const newNote = {
+        id: id(),
+        text: "Loot Found:\n" + text,
+        timestamp: new Date().toISOString(),
+        isSpecial: true,
+      };
+      state.notes.push(newNote);
+      save();
+      toast("Loot added to Campaign Notes");
+    } else {
+      toast("Generate loot first!");
+    }
+  };
+
+  generate();
+}
+
+function rollCoins(mode, CR, party) {
+  function rand(n) {
+    return Math.floor(Math.random() * n);
+  }
+  let base = Math.max(1, CR || 1) * party;
+  if (mode === "hoard") base *= 20;
+  const cp = rand(6) * base;
+  const sp = rand(6) * base;
+  const gp = rand(6) * Math.ceil(base / 2) + rand(6) * party;
+  const pp = rand(3) * Math.ceil(base / 4);
+  return { cp, sp, gp, pp };
+}
+function rollTreasure(mode, CR) {
+  const gems = [
+    "agate",
+    "bloodstone",
+    "carnelian",
+    "jade",
+    "lapis lazuli",
+    "malachite",
+    "moonstone",
+    "onyx",
+    "quartz",
+    "tiger eye",
+  ];
+  const arts = [
+    "silver ewer",
+    "carved bone statuette",
+    "gold locket",
+    "embroidered silk handkerchief",
+    "jeweled dagger",
+    "painting in gilded frame",
+  ];
+  const t = [];
+  const n =
+    mode === "hoard" ? 2 + Math.floor(Math.random() * 5) : Math.random() < 0.5 ? 1 : 0;
+  for (let i = 0; i < n; i++) {
+    if (Math.random() < 0.6) {
+      t.push(
+        `${10 * (1 + Math.floor(Math.random() * 6))} gp worth of ${pick(gems)}`
+      );
+    } else {
+      t.push(`${25 * (1 + Math.floor(Math.random() * 4))} gp ${pick(arts)}`);
+    }
+  }
+  return t;
+}
+
+// ---- Generators ---------------------------------------------------------
+const namePools = {
+  human: {
+    first: [
+      "Aric",
+      "Baldric",
+      "Cassia",
+      "Dorian",
+      "Elara",
+      "Fen",
+      "Garrick",
+      "Helena",
+      "Iris",
+      "Jorah",
+      "Kael",
+      "Lena",
+      "Marek",
+      "Nysa",
+      "Orin",
+      "Petra",
+      "Quinn",
+      "Rhea",
+      "Silas",
+      "Tamsin",
+      "Ulric",
+      "Vera",
+      "Wes",
+      "Xara",
+      "Yorick",
+      "Zanna",
+    ],
+    last: [
+      "Ashford",
+      "Blackwell",
+      "Cinder",
+      "Dusk",
+      "Eldridge",
+      "Farrow",
+      "Graves",
+      "Holloway",
+      "Ironwood",
+      "Kingsley",
+      "Lowell",
+      "Mourn",
+      "North",
+      "Oakheart",
+      "Pryor",
+      "Quick",
+      "Ravenna",
+      "Storm",
+      "Thorne",
+      "Umber",
+      "Vale",
+      "Wolfe",
+      "Xanthis",
+      "York",
+      "Zephyr",
+    ],
+  },
+  elf: {
+    first: [
+      "Aeris",
+      "Belwyn",
+      "Caelynn",
+      "Daelis",
+      "Elaith",
+      "Faelar",
+      "Galadon",
+      "Halaena",
+      "Ilyana",
+      "Jhaeros",
+      "Kaelis",
+      "Laeroth",
+      "Maeral",
+      "Naevys",
+      "Orist",
+      "Phaedra",
+      "Quelenna",
+      "Rhalyf",
+      "Saeril",
+      "Tathal",
+      "Uthelas",
+      "Vaelis",
+      "Wyn",
+      "Xyris",
+      "Yaereene",
+      "Zaos",
+    ],
+    last: [
+      "Amastacia",
+      "Galanodel",
+      "Holimion",
+      "Ilphelkiir",
+      "Liadon",
+      "Meliamne",
+      "Nailo",
+      "Siannodel",
+      "Xiloscient",
+    ],
+  },
+  dwarf: {
+    first: [
+      "Adrik",
+      "Baern",
+      "Dagnal",
+      "Einkil",
+      "Fargrim",
+      "Gunnloda",
+      "Harbek",
+      "Ilde",
+      "Jonn",
+      "Kilvar",
+      "Liftrasa",
+      "Morgran",
+      "Nalaed",
+      "Orsik",
+      "Rangrim",
+      "Sannl",
+      "Tordek",
+      "Vistra",
+    ],
+    last: [
+      "Balderk",
+      "Dankil",
+      "Gorunn",
+      "Holderhek",
+      "Ironfist",
+      "Loderr",
+      "Lutgehr",
+      "Rumnaheim",
+      "Strakeln",
+      "Torunn",
+      "Ungart",
+    ],
+  },
+  orc: {
+    first: [
+      "Agra",
+      "Brug",
+      "Crakk",
+      "Drok",
+      "Ekk",
+      "Farg",
+      "Ghaz",
+      "Hruk",
+      "Igra",
+      "Jukk",
+      "Krusk",
+      "Lurtz",
+      "Mogr",
+      "Narg",
+      "Ogg",
+      "Prusk",
+      "Rhaz",
+      "Shura",
+      "Trukk",
+      "Urga",
+      "Varg",
+      "Wrug",
+      "Xarg",
+      "Yura",
+      "Zugg",
+    ],
+    last: [
+      "Bonechewer",
+      "Bloodtusk",
+      "Skullsplitter",
+      "Ironmaw",
+      "Grimscar",
+      "Blacktooth",
+      "Stonefist",
+    ],
+  },
+  places: {
+    first: [
+      "Red",
+      "Gold",
+      "Black",
+      "Silver",
+      "Storm",
+      "Dawn",
+      "High",
+      "Low",
+      "Lake",
+      "Stone",
+      "Oak",
+      "River",
+      "Skull",
+      "Sun",
+      "Star",
+      "Frost",
+    ],
+    last: [
+      "haven",
+      "reach",
+      "gate",
+      "watch",
+      "keep",
+      "fall",
+      "ford",
+      "port",
+      "hold",
+      "crest",
+      "moor",
+      "ridge",
+      "spire",
+      "vale",
+      "wick",
+      "point",
+    ],
+  },
+};
+const npcPools = {
+  trait: [
+    "Ambitious",
+    "Cautious",
+    "Courageous",
+    "Cynical",
+    "Generous",
+    "Gruff",
+    "Honest",
+    "Inquisitive",
+    "Jovial",
+    "Loyal",
+    "Mischievous",
+    "Naive",
+    "Optimistic",
+    "Pessimistic",
+    "Quiet",
+    "Sarcastic",
+    "Scheming",
+    "Suspicious",
+  ],
+  quirk: [
+    "Has a noticeable limp",
+    "Always smells faintly of cinnamon",
+    "Taps their fingers constantly",
+    "Speaks in a whisper",
+    "Has a very loud laugh",
+    "Never makes eye contact",
+    "Has a strange tattoo",
+    "Carries a pet mouse",
+    "Is missing a tooth",
+    "Wears mismatched socks",
+    "Collects shiny rocks",
+  ],
+  desire: [
+    "To find a lost family member",
+    "To become a famous musician",
+    "To earn enough money to retire",
+    "To avenge a past wrong",
+    "To discover a hidden truth",
+    "To gain political power",
+    "To create a masterpiece",
+    "To prove their worth",
+    "To escape their past",
+    "To find true love",
+    "To explore the world",
+  ],
+};
+const tavernPools = {
+  name1: [
+    "The Prancing",
+    "The Gilded",
+    "The Rusty",
+    "The Sleeping",
+    "The Laughing",
+    "The Drunken",
+    "The Golden",
+    "The Silver",
+    "The Howling",
+    "The Mended",
+  ],
+  name2: [
+    "Pony",
+    "Dragon",
+    "Flagon",
+    "Dagger",
+    "Giant",
+    "Goblin",
+    "Gryphon",
+    "Stag",
+    "Wolf",
+    "Drum",
+  ],
+  food: [
+    "Hearty Beef Stew",
+    "Roasted Boar",
+    "Mutton Chops",
+    "Dragonbreath Chili",
+    "Suspicious Meat Pies",
+    "Salted Fish and Chips",
+    "Rotisserie Chicken",
+    "Giant Spider Steak",
+    "Mushroom and Ale Pie",
+  ],
+  drink: [
+    "Cheap Ale",
+    "Dwarven Stout",
+    "Elven Wine",
+    "Gnomish Mead",
+    "Orcish Grog",
+    "Spiced Cider",
+    "Watered-Down Brandy",
+    "Fine Whiskey",
+  ],
+  trait: [
+    "Secretly a thieves' guild hideout",
+    "The bartender is a retired adventurer",
+    "A friendly ghost haunts the cellar",
+    "Hosts an underground fight club",
+    "Known for its terrible (but potent) house brew",
+    "A mysterious hooded figure is always in the corner",
+    "The locals are unusually welcoming",
+    "The floor is inexplicably sticky",
+    "All the patrons are regulars who hate outsiders",
+  ],
+};
+
+function renderGenerators(root) {
+  const card = document.createElement("div");
+  card.className = "card";
+  card.innerHTML = `
+        <div class="tabs" id="generator-tabs">
+            <button data-tab="names" class="active">Names</button>
+            <button data-tab="npc">NPCs</button>
+            <button data-tab="location">Locations</button>
+        </div>
+        <div id="generator-content" style="margin-top: 16px;"></div>
+    `;
+  root.appendChild(card);
+
+  const contentEl = card.querySelector("#generator-content");
+  const tabs = card.querySelectorAll("#generator-tabs button");
+
+  function switchTab(tabId) {
+    tabs.forEach((t) => t.classList.toggle("active", t.dataset.tab === tabId));
+    if (tabId === "names") {
+      renderNameGeneratorContent(contentEl);
+    } else if (tabId === "npc") {
+      renderNpcGeneratorContentV2(contentEl);
+    } else if (tabId === "location") {
+      renderLocationGeneratorContent(contentEl);
+    }
+  }
+
+  tabs.forEach((tab) => (tab.onclick = () => switchTab(tab.dataset.tab)));
+
+  // Initial render
+  switchTab("names");
+}
+
+function renderNameGeneratorContent(root) {
+  root.innerHTML = `
+        <h3>Name Generator</h3>
+        <div class="row">
+          <select id="pool">
+            <option value="human">Human</option>
+            <option value="elf">Elf</option>
+            <option value="dwarf">Dwarf</option>
+            <option value="orc">Orc</option>
+            <option value="places">Place</option>
+          </select>
+          <input id="qty" type="number" min="1" max="50" value="10" style="width:90px">
+          <button class="btn primary" id="go-names">Generate</button>
+          <button class="btn" id="copy-names">Copy All</button>
+        </div>
+        <div id="nameOut" class="card" style="margin-top:10px; min-height: 200px;"></div>
+    `;
+  const out = root.querySelector("#nameOut");
+  function gen() {
+    const pool = root.querySelector("#pool").value;
+    const qty = Number(root.querySelector("#qty").value || 10);
+    const list = [];
+    for (let i = 0; i < qty; i++) {
+      if (pool === "places") {
+        list.push(
+          pick(namePools.places.first) +
+            pick(namePools.places.last).toLowerCase()
+        );
+      } else {
+        list.push(pick(namePools[pool].first) + " " + pick(namePools[pool].last));
+      }
+    }
+    out.innerHTML = `<ul>${list.map((n) => `<li>${n}</li>`).join("")}</ul>`;
+  }
+  root.querySelector("#go-names").onclick = gen;
+  root.querySelector("#copy-names").onclick = () => {
+    const text = out.querySelector("ul")?.innerText;
+    if (!text) return;
+    navigator.clipboard
+      .writeText(text)
+      .then(() => toast("Copied names to clipboard"));
+  };
+  gen();
+}
+
+function renderNpcGeneratorContentV2(root) {
+  root.innerHTML = `
+        <h3>AI NPC Generator</h3>
+        <div class="grid cols-2" style="gap: 16px;">
+            <div>
+                <label for="npc-race">Race</label>
+                <select id="npc-race">
+                    <option>Human</option><option>Elf</option><option>Dwarf</option><option>Halfling</option><option>Gnome</option><option>Dragonborn</option><option>Tiefling</option>
+                </select>
+            </div>
+            <div>
+                <label for="npc-attitude">Attitude</label>
+                <select id="npc-attitude">
+                    <option>Friendly</option><option>Neutral</option><option>Hostile</option>
+                </select>
+            </div>
+            <div>
+                <label for="npc-gender">Gender</label>
+                <select id="npc-gender">
+                    <option>Any</option><option>Male</option><option>Female</option>
+                </select>
+            </div>
+            <div>
+                <label for="npc-trait">Custom Trait (e.g., "a retired baker")</label>
+                <input id="npc-trait" type="text" placeholder="Optional detail...">
+            </div>
+        </div>
+        <div class="row" style="margin-top:16px;">
+            <button class="btn primary" id="go-npc-ai">✨ Generate NPC</button>
+        </div>
+        <div id="npcOut" class="card" style="margin-top:10px; min-height: 200px;">
+            <div class="muted">Your generated NPC will appear here...</div>
+        </div>
+    `;
+
+  const out = root.querySelector("#npcOut");
+  const btn = root.querySelector("#go-npc-ai");
+
+  btn.onclick = async () => {
+    const race = root.querySelector("#npc-race").value;
+    const attitude = root.querySelector("#npc-attitude").value;
+    const gender = root.querySelector("#npc-gender").value;
+    const trait = root.querySelector("#npc-trait").value;
+
+    let prompt = `Generate a D&D 5e NPC. Structure your response with "### Name", "### Description", and "### Statblock" headings. Do not include any other text, pleasantries, or markdown formatting like code blocks.
+
+- Race: ${race}
+- Gender: ${gender}
+- Attitude towards players: ${attitude}
+- Core Trait: ${trait || "A typical commoner"}`;
+
+    btn.textContent = "Generating...";
+    btn.disabled = true;
+    out.innerHTML = `<div class="muted">Summoning a new character from the ether...</div>`;
+
+    try {
+      const response = await fetch("http://localhost:3000/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: prompt }),
+      });
+      const data = await response.json();
+
+      if (data && data.text) {
+        const nameMatch = data.text.match(
+          /### Name\s*([\s\S]*?)\s*### Description/
+        );
+        const descMatch = data.text.match(
+          /### Description\s*([\s\S]*?)\s*### Statblock/
+        );
+        const statMatch = data.text.match(/### Statblock\s*([\s\S]*)/);
+
+        const name = nameMatch ? nameMatch[1].trim() : "Unnamed NPC";
+        const description = descMatch
+          ? descMatch[1].trim()
+          : "No description generated.";
+        const statblock = statMatch
+          ? statMatch[1].trim()
+          : "No statblock generated.";
+
+        out.innerHTML = `
+                    <h4 style="font-size: 1.25rem; font-weight: bold;">${name}</h4>
+                    <p>${description}</p>
+                    <hr style="border-color: var(--border); margin: 12px 0;">
+                    <pre id="npc-statblock" class="code" style="background:transparent; border:none; padding:0;">${statblock}</pre>
+                    <div class="footer-actions">
+                        <button class="btn primary" id="save-npc-btn">Save to Roster</button>
+                    </div>
+                `;
+
+        out.querySelector("#save-npc-btn").onclick = () => {
+          if (state.savedNPCs.some((npc) => npc.name === name)) {
+            toast(`An NPC named '${name}' already exists in the roster.`);
+            return;
+          }
+          const npcToSave = { id: id(), name, description, statblock };
+          state.savedNPCs.push(npcToSave);
+          save();
+          toast(`'${name}' saved to NPC Roster.`);
+        };
+      } else {
+        out.innerHTML = `<div class="bad">Error: Could not get a valid response from the AI. Check the server terminal for details.</div>`;
+      }
+    } catch (error) {
+      console.error("Error:", error);
+      out.innerHTML = `<div class="bad">Error: Failed to connect to the server. Is it running?</div>`;
+    } finally {
+      btn.textContent = "✨ Generate NPC";
+      btn.disabled = false;
+    }
+  };
+}
+
+function renderLocationGeneratorContent(root) {
+  root.innerHTML = `
+        <h3>AI Location Generator</h3>
+        <div class="grid cols-2" style="gap: 16px;">
+            <div>
+                <label for="loc-type">Location Type</label>
+                <select id="loc-type">
+                    <option>Tavern or Inn</option>
+                    <option>Blacksmith</option>
+                    <option>Alchemist Shop</option>
+                    <option>General Store</option>
+                    <option>Potion Shop</option>
+                    <option>Scribe or Cartographer</option>
+                    <option>Temple or Shrine</option>
+                    <option>Guard Barracks</option>
+                </select>
+            </div>
+            <div>
+                <label for="loc-quality">Quality</label>
+                <select id="loc-quality">
+                    <option>Squalid</option>
+                    <option>Poor</option>
+                    <option>Modest</option>
+                    <option>Average</option>
+                    <option>Upscale</option>
+                    <option>Exquisite</option>
+                </select>
+            </div>
+            <div class="col-span-2">
+                <label for="loc-trait">Custom Trait (e.g., "run by a retired pirate")</label>
+                <input id="loc-trait" type="text" placeholder="Optional detail...">
+            </div>
+        </div>
+        <div class="row" style="margin-top:16px;">
+            <button class="btn primary" id="go-loc-ai">✨ Generate Location</button>
+        </div>
+        <div id="locOut" class="card" style="margin-top:10px; min-height: 200px;">
+            <div class="muted">Your generated location will appear here...</div>
+        </div>
+    `;
+
+  const out = root.querySelector("#locOut");
+  const btn = root.querySelector("#go-loc-ai");
+
+  btn.onclick = async () => {
+    const type = root.querySelector("#loc-type").value;
+    const quality = root.querySelector("#loc-quality").value;
+    const trait = root.querySelector("#loc-trait").value;
+
+    let prompt = `Generate a D&D 5e location. Structure your response with "### Name", "### Description", "### Proprietor", and "### Menu/Inventory" headings. Do not include any other text, pleasantries, or markdown formatting. The inventory should include a few items with prices in gp, sp, or cp.
+
+- Location Type: ${type}
+- Quality: ${quality}
+- Special Trait: ${trait || "A typical establishment of its kind"}`;
+
+    btn.textContent = "Generating...";
+    btn.disabled = true;
+    out.innerHTML = `<div class="muted">Constructing a new establishment...</div>`;
+
+    try {
+      const response = await fetch("http://localhost:3000/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: prompt }),
+      });
+      const data = await response.json();
+
+      if (data && data.text) {
+        const nameMatch = data.text.match(
+          /### Name\s*([\s\S]*?)\s*### Description/
+        );
+        const descMatch = data.text.match(
+          /### Description\s*([\s\S]*?)\s*### Proprietor/
+        );
+        const propMatch = data.text.match(
+          /### Proprietor\s*([\s\S]*?)\s*### Menu\/Inventory/
+        );
+        const invMatch = data.text.match(/### Menu\/Inventory\s*([\s\S]*)/);
+
+        const name = nameMatch ? nameMatch[1].trim() : "Generated Location";
+        const description = descMatch
+          ? descMatch[1].trim()
+          : "No description provided.";
+        const proprietor = propMatch
+          ? propMatch[1].trim()
+          : "No proprietor details provided.";
+        const inventory = invMatch
+          ? invMatch[1].trim()
+          : "No inventory provided.";
+
+        out.innerHTML = `
+                    <h4 style="font-size: 1.25rem; font-weight: bold;">${name}</h4>
+                    <p><em>${description}</em></p>
+                    <hr style="border-color: var(--border); margin: 12px 0;">
+                    <p><strong>Proprietor:</strong> ${proprietor}</p>
+                    <hr style="border-color: var(--border); margin: 12px 0;">
+                    <pre id="location-inventory" class="code" style="background:transparent; border:none; padding:0;">${inventory}</pre>
+                    <div class="footer-actions">
+                        <button class="btn primary" id="save-loc-btn">Save Location</button>
+                    </div>
+                `;
+
+        out.querySelector("#save-loc-btn").onclick = () => {
+          if (state.savedLocations.some((loc) => loc.name === name)) {
+            toast(`A location named '${name}' already exists.`);
+            return;
+          }
+          const locToSave = {
+            id: id(),
+            name,
+            description,
+            proprietor,
+            inventory,
+          };
+          state.savedLocations.push(locToSave);
+          save();
+          toast(`'${name}' saved to Locations.`);
+        };
+      } else {
+        out.innerHTML = `<div class="bad">Error: Could not get a valid response from the AI. Check the server terminal for details.</div>`;
+      }
+    } catch (error) {
+      console.error("Error:", error);
+      out.innerHTML = `<div class="bad">Error: Failed to connect to the server. Is it running?</div>`;
+    } finally {
+      btn.textContent = "✨ Generate Location";
+      btn.disabled = false;
+    }
+  };
+}
+
+function renderNpcRoster(root) {
+  const card = document.createElement("div");
+  card.className = "card";
+  card.innerHTML = `
+        <h3>NPC Roster</h3>
+        <p class="muted">A catalog of NPCs you have generated and saved.</p>
+        <div id="npc-roster-grid" class="grid cols-2" style="margin-top:10px"></div>
+    `;
+  root.appendChild(card);
+  const grid = card.querySelector("#npc-roster-grid");
+
+  function draw() {
+    grid.innerHTML = "";
+    if (state.savedNPCs.length === 0) {
+      grid.innerHTML = `<p class="muted">No NPCs saved yet. Use the AI Generator to create and save some!</p>`;
+      return;
+    }
+    [...state.savedNPCs]
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .forEach((npc) => {
+        const el = document.createElement("div");
+        el.className = "card";
+        el.innerHTML = `
+                <h4>${npc.name}</h4>
+                <p class="muted" style="white-space: pre-wrap; max-height: 80px; overflow-y: auto;">${npc.description}</p>
+                <div class="footer-actions">
+                    <button class="btn small danger" data-id="${npc.id}" data-act="del">Delete</button>
+                    <button class="btn small" data-id="${npc.id}" data-act="view">View</button>
+                </div>
+            `;
+        grid.appendChild(el);
+      });
+  }
+
+  grid.addEventListener("click", (e) => {
+    const target = e.target;
+    const action = target.dataset.act;
+    const id = target.dataset.id;
+    if (!action || !id) return;
+
+    if (action === "del") {
+      state.savedNPCs = state.savedNPCs.filter((n) => n.id !== id);
+      save();
+      draw();
+      toast("NPC Deleted");
+    } else if (action === "view") {
+      const npc = state.savedNPCs.find((n) => n.id === id);
+      if (!npc) return;
+      const modalContent = `
+                <p>${npc.description}</p>
+                <hr style="border-color: var(--border); margin: 12px 0;">
+                <pre class="code">${npc.statblock}</pre>
+            `;
+      showModal(npc.name, modalContent);
+    }
+  });
+
+  draw();
+}
+
+function renderSavedLocations(root) {
+  const card = document.createElement("div");
+  card.className = "card";
+  card.innerHTML = `
+        <h3>Saved Locations</h3>
+        <p class="muted">A catalog of locations you have generated and saved.</p>
+        <div id="location-grid" class="grid cols-2" style="margin-top:10px"></div>
+    `;
+  root.appendChild(card);
+  const grid = card.querySelector("#location-grid");
+
+  function draw() {
+    grid.innerHTML = "";
+    if (state.savedLocations.length === 0) {
+      grid.innerHTML = `<p class="muted">No locations saved yet. Use the AI Generator to create and save some!</p>`;
+      return;
+    }
+    [...state.savedLocations]
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .forEach((loc) => {
+        const el = document.createElement("div");
+        el.className = "card";
+        el.innerHTML = `
+                <h4>${loc.name}</h4>
+                <p class="muted" style="white-space: pre-wrap; max-height: 80px; overflow-y: auto;">${loc.description}</p>
+                <div class="footer-actions">
+                    <button class="btn small danger" data-id="${loc.id}" data-act="del">Delete</button>
+                    <button class="btn small" data-id="${loc.id}" data-act="view">View</button>
+                </div>
+            `;
+        grid.appendChild(el);
+      });
+  }
+
+  grid.addEventListener("click", (e) => {
+    const target = e.target;
+    const action = target.dataset.act;
+    const id = target.dataset.id;
+    if (!action || !id) return;
+
+    if (action === "del") {
+      state.savedLocations = state.savedLocations.filter((l) => l.id !== id);
+      save();
+      draw();
+      toast("Location Deleted");
+    } else if (action === "view") {
+      const loc = state.savedLocations.find((l) => l.id === id);
+      if (!loc) return;
+      const modalContent = `
+                <p><em>${loc.description}</em></p>
+                <hr style="border-color: var(--border); margin: 12px 0;">
+                <p><strong>Proprietor:</strong> ${loc.proprietor}</p>
+                <hr style="border-color: var(--border); margin: 12px 0;">
+                <pre class="code">${loc.inventory}</pre>
+            `;
+      showModal(loc.name, modalContent);
+    }
+  });
+
+  draw();
+}
+
+function pick(arr) {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
+// ---- Conditions -------------------------------------------------------------
+const CONDITIONS = [
+  {
+    name: "Blinded",
+    text: "A blinded creature can’t see and automatically fails any ability check that requires sight. Attack rolls against the creature have advantage, and the creature’s attack rolls have disadvantage.",
+  },
+  {
+    name: "Charmed",
+    text: "A charmed creature can’t attack the charmer or target the charmer with harmful abilities or magical effects, and the charmer has advantage on any ability check to interact socially with the creature.",
+  },
+  {
+    name: "Deafened",
+    text: "A deafened creature can’t hear and automatically fails any ability check that requires hearing.",
+  },
+  {
+    name: "Frightened",
+    text: "A frightened creature has disadvantage on ability checks and attack rolls while the source of its fear is within line of sight. The creature can’t willingly move closer to the source of its fear.",
+  },
+  {
+    name: "Grappled",
+    text: "A grappled creature’s speed becomes 0, and it can’t benefit from any bonus to its speed. The condition ends if the grappler is incapacitated, or if the creature is moved out of the grappler’s reach.",
+  },
+  {
+    name: "Incapacitated",
+    text: "An incapacitated creature can’t take actions or reactions.",
+  },
+  {
+    name: "Invisible",
+    text: "An invisible creature is impossible to see without the aid of magic. Attack rolls against the creature have disadvantage, and the creature’s attack rolls have advantage.",
+  },
+  {
+    name: "Paralyzed",
+    text: "A paralyzed creature is incapacitated and can’t move or speak; attack rolls against it have advantage; any attack that hits is a critical hit if the attacker is within 5 feet of the creature.",
+  },
+  {
+    name: "Petrified",
+    text: "A petrified creature is transformed, along with any nonmagical object it is wearing or carrying, into a solid inanimate substance; the creature is incapacitated, can’t move or speak, and is unaware of its surroundings.",
+  },
+  {
+    name: "Poisoned",
+    text: "A poisoned creature has disadvantage on attack rolls and ability checks.",
+  },
+  {
+    name: "Prone",
+    text: "A prone creature’s only movement option is to crawl, unless it stands up; the creature has disadvantage on attack rolls, and an attack roll against the creature has advantage if the attacker is within 5 feet of the creature.",
+  },
+  {
+    name: "Restrained",
+    text: "A restrained creature’s speed becomes 0; attack rolls against it have advantage; the creature has disadvantage on Dexterity saving throws and attack rolls.",
+  },
+  {
+    name: "Stunned",
+    text: "A stunned creature is incapacitated, can’t move, and can speak only falteringly; the creature automatically fails Strength and Dexterity saving throws; attack rolls against the creature have advantage.",
+  },
+  {
+    name: "Unconscious",
+    text: "An unconscious creature is incapacitated, can’t move or speak, is unaware of its surroundings, drops whatever it’s holding, and falls prone.",
+  },
+  {
+    name: "Exhaustion (Levels 1–6)",
+    text: "1: Disadvantage on checks; 2: Speed halved; 3: Disadvantage on attacks and saves; 4: HP max halved; 5: Speed 0; 6: Death.",
+  },
+];
+
+function renderConditions(root) {
+  const card = document.createElement("div");
+  card.className = "card";
+  card.innerHTML = `
+    <h3>Conditions Cheat Sheet</h3>
+    <input id="condSearch" placeholder="Search conditions…"/>
+    <div id="condList" class="grid cols-2" style="margin-top:10px"></div>
+  `;
+  root.appendChild(card);
+  const list = card.querySelector("#condList");
+  function draw(filter = "") {
+    const f = filter.toLowerCase();
+    list.innerHTML = CONDITIONS.filter((c) =>
+      c.name.toLowerCase().includes(f)
+    )
+      .map(
+        (c, i) => `
+      <div class="card">
+        <div class="row" style="justify-content:space-between; align-items:center">
+          <b>${c.name}</b>
+          <button class="btn small" data-copy-index="${i}">Copy</button>
+        </div>
+        <div class="muted" style="margin-top: 6px;">${c.text}</div>
+      </div>
+    `
+      )
+      .join("");
+  }
+  draw();
+  card.querySelector("#condSearch").oninput = (e) => draw(e.target.value);
+  list.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-copy-index]");
+    if (!btn) return;
+    const i = Number(btn.getAttribute("data-copy-index"));
+    const c = CONDITIONS[i];
+    if (!c) return;
+    navigator.clipboard
+      .writeText(`${c.name}: ${c.text}`)
+      .then(() => toast(`Copied '${c.name}'`));
+  });
+}
+
+// ---- Items Catalog ----------------------------------------------------------
+function renderItems(root, preselectId = null) {
+  const wrap = document.createElement("div");
+  wrap.className = "split";
+
+  // left: list
+  const listCard = document.createElement("div");
+  listCard.className = "card";
+  listCard.innerHTML = `
+    <h3>Magic Items</h3>
+    <div class="row">
+      <input id="itemSearch" placeholder="Search name/type/rarity…" class="grow">
+      <button class="btn" id="addItem">New Item</button>
+    </div>
+    <div style="max-height:60vh; overflow:auto; margin-top:10px">
+      <table id="itemTable">
+        <thead><tr><th>Name</th><th>Type</th><th>Rarity</th><th>Attune</th><th>Actions</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  `;
+
+  const formCard = document.createElement("div");
+  formCard.className = "card";
+  formCard.innerHTML = `
+    <h3 id="itemFormTitle">Create / Edit Item</h3>
+    <div class="grid cols-2">
+      <div><label>Name</label><input id="i_name"></div>
+      <div><label>Type</label><input id="i_type" placeholder="Wand, Potion, Weapon…"></div>
+    </div>
+    <div class="grid cols-2" style="margin-top:8px">
+      <div><label>Rarity</label><select id="i_rarity"><option>Common</option><option>Uncommon</option><option>Rare</option><option>Very Rare</option><option>Legendary</option><option>Artifact</option></select></div>
+      <div><label>Requires Attunement?</label><select id="i_attune"><option value="false">No</option><option value="true">Yes</option></select></div>
+    </div>
+    <div style="margin-top:8px"><label>Description</label><textarea id="i_desc"></textarea></div>
+    <div class="footer-actions">
+      <button class="btn primary" id="saveItem">Save Item</button>
+      <button class="btn ghost" id="clearForm">Clear Form</button>
+    </div>
+  `;
+
+  wrap.appendChild(listCard);
+  wrap.appendChild(formCard);
+  root.appendChild(wrap);
+
+  const tbody = listCard.querySelector("tbody");
+  const search = listCard.querySelector("#itemSearch");
+  const formTitle = formCard.querySelector("#itemFormTitle");
+  const iName = formCard.querySelector("#i_name");
+  const iType = formCard.querySelector("#i_type");
+  const iRarity = formCard.querySelector("#i_rarity");
+  const iAttune = formCard.querySelector("#i_attune");
+  const iDesc = formCard.querySelector("#i_desc");
+
+  let editingId = null;
+
+  function draw(filter = "") {
+    const f = filter.toLowerCase();
+    tbody.innerHTML = state.items
+      .filter((it) =>
+        `${it.name} ${it.type} ${it.rarity}`.toLowerCase().includes(f)
+      )
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map(
+        (it) => `
+      <tr data-id="${it.id}" class="${it.id === editingId ? "active" : ""}">
+        <td>${it.name}</td>
+        <td>${it.type || ""}</td>
+        <td>${it.rarity || ""}</td>
+        <td>${it.attunement ? "Yes" : "No"}</td>
+        <td class="row" style="gap:4px;">
+          <button class="btn small" data-act="edit">Edit</button>
+          <button class="btn small danger" data-act="del">Del</button>
+        </td>
+      </tr>
+    `
+      )
+      .join("");
+  }
+
+  function clearForm() {
+    editingId = null;
+    formTitle.textContent = "Create New Item";
+    iName.value = "";
+    iType.value = "";
+    iRarity.value = "Common";
+    iAttune.value = "false";
+    iDesc.value = "";
+    iName.focus();
+    draw(search.value);
+  }
+
+  function editItem(id) {
+    const item = state.items.find((it) => it.id === id);
+    if (!item) {
+      clearForm();
+      return;
+    }
+    editingId = id;
+    formTitle.textContent = `Editing: ${item.name}`;
+    iName.value = item.name;
+    iType.value = item.type;
+    iRarity.value = item.rarity;
+    iAttune.value = item.attunement ? "true" : "false";
+    iDesc.value = item.desc;
+    draw(search.value);
+  }
+
+  function saveItem() {
+    const name = iName.value.trim();
+    if (!name) {
+      toast("Item name is required.");
+      return;
+    }
+    if (editingId) {
+      const item = state.items.find((it) => it.id === editingId);
+      if (item) {
+        Object.assign(item, {
+          name,
+          type: iType.value,
+          rarity: iRarity.value,
+          attunement: iAttune.value === "true",
+          desc: iDesc.value,
+        });
+        toast(`Updated ${name}`);
+      }
+    } else {
+      state.items.push({
+        id: id(),
+        name,
+        type: iType.value,
+        rarity: iRarity.value,
+        attunement: iAttune.value === "true",
+        desc: iDesc.value,
+      });
+      toast(`Created ${name}`);
+    }
+    save();
+    clearForm();
+    draw(search.value);
+  }
+
+  search.oninput = () => draw(search.value);
+  listCard.querySelector("#addItem").onclick = clearForm;
+  formCard.querySelector("#saveItem").onclick = saveItem;
+  formCard.querySelector("#clearForm").onclick = clearForm;
+
+  tbody.addEventListener("click", (e) => {
+    const btn = e.target;
+    const action = btn.getAttribute("data-act");
+    if (!action) return;
+    const itemId = btn.closest("tr").getAttribute("data-id");
+    if (action === "edit") {
+      editItem(itemId);
+    } else if (action === "del") {
+      state.items = state.items.filter((it) => it.id !== itemId);
+      save();
+      if (editingId === itemId) clearForm();
+      draw(search.value);
+      toast("Item deleted");
+    }
+  });
+
+  draw();
+  if (preselectId) {
+    editItem(preselectId);
+  } else {
+    clearForm();
+  }
+}
+
+// ---- Bestiary ---------------------------------------------------------------
+function renderBestiary(root, preselectId = null) {
+  const wrap = document.createElement("div");
+  wrap.className = "split";
+
+  // Left: list
+  const listCard = document.createElement("div");
+  listCard.className = "card";
+  listCard.innerHTML = `
+    <h3>Bestiary</h3>
+    <div class="row">
+      <input id="beastSearch" placeholder="Search name/type/cr…" class="grow">
+      <button class="btn" id="addBeast">New Monster</button>
+    </div>
+    <div style="max-height:75vh; overflow:auto; margin-top:10px">
+      <table id="beastTable">
+        <thead><tr><th>Name</th><th>Type</th><th>CR</th><th>Actions</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  `;
+
+  // Right: form
+  const formCard = document.createElement("div");
+  formCard.className = "card";
+  formCard.innerHTML = `
+    <h3 id="beastFormTitle">Create / Edit Monster</h3>
+    <div class="grid cols-2">
+      <div><label>Name</label><input id="b_name"></div>
+      <div><label>Size/Type/Alignment</label><input id="b_sizeTypeAlign"></div>
+    </div>
+    <div class="grid cols-4" style="margin-top:8px">
+      <div><label>AC</label><input id="b_ac" type="number"></div>
+      <div><label>HP</label><input id="b_hp" type="number"></div>
+      <div><label>Speed</label><input id="b_speed"></div>
+      <div><label>CR</label><input id="b_cr"></div>
+    </div>
+    <label style="margin-top:8px">Stats (STR, DEX, CON, INT, WIS, CHA)</label>
+    <div class="grid" style="grid-template-columns: repeat(6, 1fr);">
+      <input id="b_str" type="number"> <input id="b_dex" type="number"> <input id="b_con" type="number">
+      <input id="b_int" type="number"> <input id="b_wis" type="number"> <input id="b_cha" type="number">
+    </div>
+    <div class="grid cols-2" style="margin-top:8px">
+      <div><label>Skills</label><input id="b_skills"></div>
+      <div><label>Senses</label><input id="b_senses"></div>
+    </div>
+    <div style="margin-top:8px"><label>Languages</label><input id="b_languages"></div>
+    <div style="margin-top:8px"><label>Traits</label><textarea id="b_traits"></textarea></div>
+    <div style="margin-top:8px"><label>Actions</label><textarea id="b_actions"></textarea></div>
+    <div style="margin-top:8px"><label>Notes</label><textarea id="b_notes"></textarea></div>
+    <div class="footer-actions">
+        <button class="btn" id="generateDescBtn">✨ Generate AI Description</button>
+        <button class="btn primary" id="saveBeast">Save Monster</button>
+        <button class="btn ghost" id="clearForm">Clear Form</button>
+    </div>
+  `;
+
+  wrap.appendChild(listCard);
+  wrap.appendChild(formCard);
+  root.appendChild(wrap);
+
+  const tbody = listCard.querySelector("tbody");
+  const search = listCard.querySelector("#beastSearch");
+  let editingId = null;
+
+  const form = {
+    title: formCard.querySelector("#beastFormTitle"),
+    name: formCard.querySelector("#b_name"),
+    sizeTypeAlign: formCard.querySelector("#b_sizeTypeAlign"),
+    ac: formCard.querySelector("#b_ac"),
+    hp: formCard.querySelector("#b_hp"),
+    speed: formCard.querySelector("#b_speed"),
+    cr: formCard.querySelector("#b_cr"),
+    str: formCard.querySelector("#b_str"),
+    dex: formCard.querySelector("#b_dex"),
+    con: formCard.querySelector("#b_con"),
+    int: formCard.querySelector("#b_int"),
+    wis: formCard.querySelector("#b_wis"),
+    cha: formCard.querySelector("#b_cha"),
+    skills: formCard.querySelector("#b_skills"),
+    senses: formCard.querySelector("#b_senses"),
+    languages: formCard.querySelector("#b_languages"),
+    traits: formCard.querySelector("#b_traits"),
+    actions: formCard.querySelector("#b_actions"),
+    notes: formCard.querySelector("#b_notes"),
+  };
+
+  function draw(filter = "") {
+    const f = filter.toLowerCase();
+    tbody.innerHTML = state.monsters
+      .filter((m) =>
+        `${m.name} ${m.sizeTypeAlign} ${m.cr}`.toLowerCase().includes(f)
+      )
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map(
+        (m) => `
+      <tr data-id="${m.id}">
+        <td>${m.name}</td>
+        <td>${m.sizeTypeAlign.split(",")[0]}</td>
+        <td>${m.cr}</td>
+        <td class="row" style="gap:4px;">
+          <button class="btn small" data-act="edit">Edit</button>
+          <button class="btn small danger" data-act="del">Del</button>
+        </td>
+      </tr>
+    `
+      )
+      .join("");
+  }
+
+  function clearForm() {
+    editingId = null;
+    form.title.textContent = "Create New Monster";
+    for (const key in form) {
+      if (key !== "title") form[key].value = "";
+    }
+    form.name.focus();
+  }
+
+  function editMonster(id) {
+    const m = state.monsters.find((beast) => beast.id === id);
+    if (!m) {
+      clearForm();
+      return;
+    }
+    editingId = id;
+    form.title.textContent = `Editing: ${m.name}`;
+    form.name.value = m.name;
+    form.sizeTypeAlign.value = m.sizeTypeAlign;
+    form.ac.value = m.ac;
+    form.hp.value = m.hp;
+    form.speed.value = m.speed;
+    form.cr.value = m.cr;
+    form.str.value = m.stats.str;
+    form.dex.value = m.stats.dex;
+    form.con.value = m.stats.con;
+    form.int.value = m.stats.int;
+    form.wis.value = m.stats.wis;
+    form.cha.value = m.stats.cha;
+    form.skills.value = m.skills;
+    form.senses.value = m.senses;
+    form.languages.value = m.languages;
+    form.traits.value = m.traits;
+    form.actions.value = m.actions;
+    form.notes.value = m.notes;
+    draw(search.value);
+  }
+
+  function saveMonster() {
+    const name = form.name.value.trim();
+    if (!name) {
+      toast("Monster name is required.");
+      return;
+    }
+    const monsterData = {
+      name,
+      sizeTypeAlign: form.sizeTypeAlign.value,
+      ac: Number(form.ac.value),
+      hp: Number(form.hp.value),
+      speed: form.speed.value,
+      cr: form.cr.value,
+      stats: {
+        str: Number(form.str.value),
+        dex: Number(form.dex.value),
+        con: Number(form.con.value),
+        int: Number(form.int.value),
+        wis: Number(form.wis.value),
+        cha: Number(form.cha.value),
+      },
+      skills: form.skills.value,
+      senses: form.senses.value,
+      languages: form.languages.value,
+      traits: form.traits.value,
+      actions: form.actions.value,
+      notes: form.notes.value,
+    };
+
+    if (editingId) {
+      const monster = state.monsters.find((m) => m.id === editingId);
+      if (monster) Object.assign(monster, monsterData);
+      toast(`Updated ${name}`);
+    } else {
+      state.monsters.push({ ...monsterData, id: id(), maxHp: monsterData.hp });
+      toast(`Created ${name}`);
+    }
+    save();
+    clearForm();
+    draw(search.value);
+  }
+
+  formCard.querySelector("#generateDescBtn").onclick = async () => {
+    const monsterName = form.name.value.trim();
+    const monsterType = form.sizeTypeAlign.value.trim();
+    if (!monsterName || !monsterType) {
+      toast("Please enter a name and type first.");
+      return;
+    }
+
+    toast("Generating description...");
+    const prompt = `Generate a short, vivid, and evocative description for a D&D monster to be read to players. The monster is a ${monsterName}, which is a ${monsterType}.`;
+
+    try {
+      const response = await fetch("http://localhost:3000/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: prompt }),
+      });
+      const data = await response.json();
+
+      // Check if the response has the expected text property
+      if (data && data.text) {
+        form.notes.value = data.text;
+        toast("Description generated!");
+      } else {
+        console.error("API Error:", data);
+        toast("Error: Could not get a valid description from the AI.");
+      }
+    } catch (error) {
+      console.error("Error:", error);
+      toast("Failed to generate description. Is your server running?");
+    }
+  };
+
+  search.oninput = () => draw(search.value);
+  listCard.querySelector("#addBeast").onclick = clearForm;
+  formCard.querySelector("#saveBeast").onclick = saveMonster;
+  formCard.querySelector("#clearForm").onclick = clearForm;
+
+  tbody.addEventListener("click", (e) => {
+    const btn = e.target;
+    const action = btn.getAttribute("data-act");
+    if (!action) return;
+    const monsterId = btn.closest("tr").getAttribute("data-id");
+    if (action === "edit") {
+      editMonster(monsterId);
+    } else if (action === "del") {
+      state.monsters = state.monsters.filter((m) => m.id !== monsterId);
+      save();
+      if (editingId === monsterId) clearForm();
+      draw(search.value);
+      toast("Monster deleted");
+    }
+  });
+
+  draw();
+  if (preselectId) {
+    editMonster(preselectId);
+  } else {
+    clearForm();
+  }
+}
+
+// ---- About & Help -----------------------------------------------------------
+function renderAbout(root) {
+  root.innerHTML = `
+    <div class="card">
+      <h3>About this GM Screen</h3>
+      <p>This is a lightweight, all-in-one tool for Game Masters, designed to be fast, offline-first, and fully contained in a single HTML file. All your data is saved locally in your browser's <code>localStorage</code>.</p>
+      <p>Features include:</p>
+      <ul>
+        <li>A main Dashboard with quick-access tools and cheat sheets.</li>
+        <li>A full Initiative Tracker for managing combat.</li>
+        <li>Dice Roller with complex formula support (e.g., <code>4d6kh3+2</code>)</li>
+        <li>Party Tracker for HP, AC, and other stats</li>
+        <li>Campaign Notes with timestamps and editing.</li>
+        <li>Random Loot & Name Generators</li>
+        <li>Editable catalogs for Magic Items and Monsters</li>
+        <li>Condition reference sheet</li>
+        <li>Global search across all your data</li>
+        <li>Import/Export your entire dataset as a JSON file for backup or migration.</li>
+      </ul>
+      <p>This tool is open-source and has no external dependencies. Feel free to save the HTML file and use it anywhere.</p>
+    </div>
+  `;
+}
+
+// ---- Global Search ----------------------------------------------------------
+document.getElementById("globalSearch").addEventListener("input", (e) => {
+  const query = e.target.value.toLowerCase().trim();
+  if (!query) {
+    route(currentRoute); // Restore current view if search is cleared
+    return;
+  }
+
+  const view = document.getElementById("view");
+  view.innerHTML = "";
+  const card = document.createElement("div");
+  card.className = "card";
+  card.innerHTML = `<h3>Search Results for "${e.target.value}"</h3><div id="searchResults"></div>`;
+  view.appendChild(card);
+  const resultsEl = card.querySelector("#searchResults");
+  let resultsHTML = "";
+
+  // Search Notes
+  const noteResults = state.notes.filter((n) =>
+    n.text.toLowerCase().includes(query)
+  );
+  if (noteResults.length) {
+    resultsHTML +=
+      `<h4>Notes</h4><ul>` +
+      noteResults
+        .map(
+          (n) =>
+            `<li><a href="#" data-route="notes" data-id="${
+              n.id
+            }">${n.text.substring(0, 50)}...</a></li>`
+        )
+        .join("") +
+      `</ul>`;
+  }
+
+  // Search Monsters
+  const monsterResults = state.monsters.filter((m) =>
+    m.name.toLowerCase().includes(query)
+  );
+  if (monsterResults.length) {
+    resultsHTML +=
+      `<h4>Monsters</h4><ul>` +
+      monsterResults
+        .map(
+          (m) =>
+            `<li><a href="#" data-route="bestiary" data-id="${m.id}">${m.name}</a> (CR ${m.cr})</li>`
+        )
+        .join("") +
+      `</ul>`;
+  }
+
+  // Search Items
+  const itemResults = state.items.filter((i) =>
+    i.name.toLowerCase().includes(query)
+  );
+  if (itemResults.length) {
+    resultsHTML +=
+      `<h4>Magic Items</h4><ul>` +
+      itemResults
+        .map(
+          (i) =>
+            `<li><a href="#" data-route="items" data-id="${i.id}">${i.name}</a> (${i.rarity})</li>`
+        )
+        .join("") +
+      `</ul>`;
+  }
+
+  // Search Conditions
+  const conditionResults = CONDITIONS.filter((c) =>
+    c.name.toLowerCase().includes(query)
+  );
+  if (conditionResults.length) {
+    resultsHTML +=
+      `<h4>Conditions</h4><ul>` +
+      conditionResults
+        .map(
+          (c) =>
+            `<li><a href="#" data-route="conditions" data-id="${c.name}">${c.name}</a></li>`
+        )
+        .join("") +
+      `</ul>`;
+  }
+
+  resultsEl.innerHTML = resultsHTML || '<p class="muted">No results found.</p>';
+});
+
+document.getElementById("view").addEventListener("click", (e) => {
+  if (e.target.tagName !== "A" || !e.target.dataset.route) return;
+  e.preventDefault();
+  const destRoute = e.target.dataset.route;
+  const destId = e.target.dataset.id;
+  document.getElementById("globalSearch").value = "";
+  if (destRoute === "conditions") {
+    route("conditions");
+    // We can't pre-select, but we can filter
+    setTimeout(() => {
+      const searchInput = document.getElementById("condSearch");
+      if (searchInput) {
+        searchInput.value = destId;
+        searchInput.dispatchEvent(new Event("input"));
+      }
+    }, 50);
+  } else if (destRoute === "notes") {
+    route("notes");
+    // We can't pre-select for editing, but we can scroll to it.
+    setTimeout(() => {
+      const noteEl = document.querySelector(`.note[data-id="${destId}"]`);
+      if (noteEl) {
+        noteEl.scrollIntoView({ behavior: "smooth", block: "center" });
+        noteEl.classList.add("special"); // temp highlight
+        setTimeout(() => noteEl.classList.remove("special"), 2000);
+      }
+    }, 100);
+  } else {
+    route(destRoute, destId);
+  }
+});
+
+// ---- System Functions -------------------------------------------------------
+function runTests() {
+  console.clear();
+  log("--- Running Self-Tests ---");
+  let pass = 0,
+    fail = 0;
+  function assert(name, condition) {
+    if (condition) {
+      console.log(`%c✔ PASS: ${name}`, "color: var(--ok)");
+      pass++;
+    } else {
+      console.error(`%c✖ FAIL: ${name}`, "color: var(--danger)");
+      fail++;
+    }
+  }
+
+  // Dice Roller Tests
+  const d1 = rollDice("1d20");
+  assert(
+    "1d20 total is a number",
+    typeof d1.total === "number" && d1.total >= 1 && d1.total <= 20
+  );
+  const d2 = rollDice("2d6+5");
+  assert(
+    "2d6+5 total is correct",
+    d2.total === d2.rolls.reduce((a, b) => a + b, 5)
+  );
+  const d3 = rollDice("4d6kh3");
+  assert(
+    "4d6kh3 keeps 3 highest",
+    d3.used.length === 3 && d3.total === d3.used.reduce((a, b) => a + b, 0)
+  );
+  const d4 = rollDice("2d20kl1");
+  assert(
+    "2d20kl1 (disadvantage) keeps 1 lowest",
+    d4.used.length === 1 && d4.used[0] === Math.min(...d4.rolls)
+  );
+  const d5 = rollDice("d%");
+  assert("d% rolls between 1-100", d5.total >= 1 && d5.total <= 100);
+  const d6 = rollDice("bad");
+  assert("Bad formula returns error", !!d6.error);
+
+  const result = `Tests complete. Passed: ${pass}, Failed: ${fail}.`;
+  log(result);
+  toast(result, 4000);
+  renderLog();
+}
+
+function toggleTheme() {
+  const themes = ["dark", "light", "parchment"];
+  const html = document.documentElement;
+  const currentTheme = state.settings.theme || "dark";
+  const currentIndex = themes.indexOf(currentTheme);
+  const nextIndex = (currentIndex + 1) % themes.length;
+  state.settings.theme = themes[nextIndex];
+
+  applyTheme(); // Apply the new theme
+
+  save();
+  log(`Theme set to ${state.settings.theme}`);
+  renderLog();
+}
+
+function applyTheme() {
+  const html = document.documentElement;
+  const theme = state.settings.theme || "dark";
+  html.classList.remove("light-theme", "parchment-theme"); // Clear existing themes
+  if (theme !== "dark") {
+    html.classList.add(theme + "-theme");
+  }
+}
+
+// ---- App Initialization -----------------------------------------------------
+function init() {
+  applyTheme();
+  route(currentRoute);
+  counters();
+}
+
+// Note: In a separate file, you must wait for the DOM to be ready.
+document.addEventListener("DOMContentLoaded", init);
