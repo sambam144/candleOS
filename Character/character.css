@@ -110,6 +110,15 @@ html.parchment-theme .nav button.active {
   color: var(--text);
 }
 
+/* NEW: Match GM Screen parchment theme fonts */
+html.parchment-theme h1,
+html.parchment-theme h2,
+html.parchment-theme h3,
+html.parchment-theme .brand,
+html.parchment-theme .nav button {
+  font-family: serif;
+}
+
 .content {
   overflow: auto;
 }
